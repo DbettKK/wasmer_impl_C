@@ -1,8 +1,9 @@
 use crate::utils::{parse_envvar, parse_mapdir};
 use anyhow::Result;
+use libc::c_void;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use wasmer::{AsStoreMut, FunctionEnv, Instance, Module, RuntimeError, Value};
+use wasmer::{AsStoreMut, FunctionEnv, Instance, Module, RuntimeError, Value, TypedFunction, Function};
 use wasmer_wasi::{
     get_wasi_versions, import_object_for_all_wasi_versions, is_wasix_module, WasiEnv, WasiError,
     WasiState, WasiVersion,
@@ -64,7 +65,7 @@ impl Wasi {
     pub fn get_versions(module: &Module) -> Option<BTreeSet<WasiVersion>> {
         // Get the wasi version in strict mode, so no other imports are
         // allowed.
-        get_wasi_versions(module, true)
+        get_wasi_versions(module, false)
     }
 
     /// Checks if a given module has any WASI imports at all.
@@ -98,13 +99,15 @@ impl Wasi {
                     .setup_fs(Box::new(wasmer_wasi_experimental_io_devices::initialize));
             }
         }
-
         let wasi_env = wasi_state_builder.finalize(store)?;
         wasi_env.env.as_mut(store).state.fs.is_wasix.store(
             is_wasix_module(module),
             std::sync::atomic::Ordering::Release,
         );
-        let import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
+        let mut import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
+
+        import_object.define("env", "my_lre_exec_backtrack", Function::new_typed(store, wrap_lre_exec_backtrack));
+
         let instance = Instance::new(store, module, &import_object)?;
         let memory = instance.exports.get_memory("memory")?;
         wasi_env.data_mut(store).set_memory(memory.clone());
@@ -140,5 +143,38 @@ impl Wasi {
             pre_opened_directories: vec![dir],
             ..Self::default()
         })
+    }
+}
+
+#[link(name = "my-helpers")]
+extern "C" {
+    fn lre_exec_backtrack(
+        mf: i32,
+        state: i32,
+        s: i32,
+        capture_wasm: i32,
+        stack_wasm: i32,
+        stack_len: i32,
+        pc_wasm: i32, 
+        cptr_wasm: i32,
+        no_recurse: i32,
+    ) -> i32;
+}
+
+fn wrap_lre_exec_backtrack(
+    mf: i32, 
+    state: i32, 
+    s: i32, 
+    capture_wasm: i32,
+    stack_wasm: i32,
+    stack_len: i32,
+    pc_wasm: i32, 
+    cptr_wasm: i32,
+    no_recurse: i32,
+) -> i32 {
+    unsafe {
+        //let start = Instant::now();
+        lre_exec_backtrack(mf, state, s, capture_wasm, stack_wasm, stack_len, pc_wasm, cptr_wasm, no_recurse)
+        //println!("{:?}", start.elapsed().as_nanos());
     }
 }

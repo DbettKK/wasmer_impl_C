@@ -7,6 +7,7 @@ use crate::suggestions::suggest_function_exports;
 use crate::warning;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use libc::c_void;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -254,6 +255,7 @@ impl Run {
                 );
                 let import_object =
                     generate_emscripten_env(&mut store, &env, &mut emscripten_globals);
+
                 let mut instance = match Instance::new(&mut store, &module, &import_object) {
                     Ok(instance) => instance,
                     Err(e) => {
@@ -289,7 +291,6 @@ impl Run {
         let ret = {
             use std::collections::BTreeSet;
             use wasmer_wasi::WasiVersion;
-
             let wasi_versions = Wasi::get_versions(&module);
             match wasi_versions {
                 Some(wasi_versions) if !wasi_versions.is_empty() => {
@@ -323,6 +324,38 @@ impl Run {
                         .wasi
                         .instantiate(&mut store, &module, program_name, self.args.clone())
                         .with_context(|| "failed to instantiate WASI module")?;
+                                
+                    // ...
+                    let linear_memory = instance.exports.get_memory("memory").unwrap().view(&mut store).data_ptr();
+                    let table = instance.exports.get_table("__indirect_function_table").unwrap();
+                    
+                    unsafe {
+                        // 将linear_memory对应的基地址传递给helper
+                        get_linear_memory(linear_memory);
+                    }
+
+                    let mut realloc_closure = |table_index: i32, state: i32, ptr: i32, size: u32| -> i32 {
+                        let val = table.get(&mut store, table_index as u32).unwrap();
+                        let tmp = val.unwrap_funcref().as_ref().unwrap();
+                        let f: TypedFunction<(i32, i32, u32), i32> = tmp.typed(&mut store).unwrap();
+                        f.call(&mut store, state, ptr, size).unwrap()
+                    };
+                    unsafe {
+                        register_wasm_js_realloc(get_wasm_js_realloc(&mut realloc_closure), 
+                            &mut realloc_closure as *mut _ as *mut c_void);
+                    }
+
+                    let js_def_realloc: TypedFunction<(i32, i32, i32), i32> = instance.exports.get_function("js_def_realloc").
+                                            unwrap().typed(&mut store).unwrap();
+
+                    let mut js_def_realloc_c = |m: i32, ptr: i32, size: i32| -> i32 {
+                        js_def_realloc.call(&mut store, m, ptr, size).unwrap()
+                    };
+                    unsafe {
+                        register_wasm_js_realloc_def(get_wasm_js_realloc_def(&mut js_def_realloc_c), 
+                            &mut js_def_realloc_c as *mut _ as *mut c_void)
+                    }
+                    // ...
                     self.inner_module_run(store, instance)
                 }
                 // not WASI
@@ -907,4 +940,43 @@ pub(crate) fn try_run_package_or_file(
 
     // else: local package not found - try to download and install package
     try_autoinstall_package(args, &sv, package_download_info, r.force_install)
+}
+
+// == relative == //
+extern "C" {
+    fn register_wasm_js_realloc(
+        f: extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32,  
+        cl: *mut c_void
+    );
+    fn register_wasm_js_realloc_def(
+        f: extern "C" fn(i32, i32, i32, *mut c_void) -> i32,  
+        cl: *mut c_void
+    );
+    fn get_linear_memory(mem: *mut u8);
+}
+
+extern "C" fn wasm_js_realloc<F>(table_index: i32, state: i32, ptr: i32, size: u32, closure: *mut c_void) -> i32 
+where F: FnMut(i32, i32, i32, u32) -> i32 {
+    unsafe {
+        let cl = &mut *(closure as *mut F);
+        cl(table_index, state, ptr, size)
+    }
+}
+
+fn get_wasm_js_realloc<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32
+where F: FnMut(i32, i32, i32, u32) -> i32 {
+    wasm_js_realloc::<F>
+}
+
+extern "C" fn wasm_js_realloc_def<F>(state: i32, ptr: i32, size: i32, closure: *mut c_void) -> i32 
+where F: FnMut(i32, i32, i32) -> i32 {
+    unsafe {
+        let cl = &mut *(closure as *mut F);
+        cl(state, ptr, size)
+    }
+}
+
+fn get_wasm_js_realloc_def<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, *mut c_void) -> i32
+where F: FnMut(i32, i32, i32) -> i32 {
+    wasm_js_realloc_def::<F>
 }

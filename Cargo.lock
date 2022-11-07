@@ -3933,6 +3933,7 @@ dependencies = [
  "anyhow",
  "atty",
  "bytesize",
+ "cc",
  "cfg-if 1.0.0",
  "chrono",
  "clap 3.2.23",

@@ -74,6 +74,7 @@ isatty = "0.1.9"
 
 [build-dependencies]
 chrono = { version = "^0.4", default-features = false, features = [ "std", "clock" ] }
+cc = "1.0.74"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 unix_mode = "0.1.3"
