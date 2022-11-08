@@ -15,11 +15,11 @@ void get_linear_memory(char *mem) {
     linear_memory = mem;
 }
 
-void* transfer_i32_to_ptr(int i32) {
+inline void* transfer_i32_to_ptr(int i32) {
     return linear_memory + i32;
 }
 
-int transfer_ptr_to_i32(void *ptr) {
+inline int transfer_ptr_to_i32(void *ptr) {
     char *cast_ptr = ptr;
     return (cast_ptr - linear_memory) / sizeof(char);
 }
