@@ -11,13 +11,13 @@ pub fn main() {
     build.define(&format!("CFG_TARGET_ARCH_{}", arch), None);
     let files = ["helper.c", "lre_exec_backtrack.c"];
     for f in files {
-        build.file("src/commands/helper/".to_string() + f);
-        println!("{}", "cargo:rerun-if-changed=src/commands/helper/".to_string() + f);
+        build.file("../../wasm_qjs_helper/helper/".to_string() + f);
+        println!("{}", "cargo:rerun-if-changed=../../wasm_qjs_helper/helper/".to_string() + f);
     }
-    println!("{}", "cargo:rerun-if-changed=src/commands/helper/".to_string() + "helper.h");
-    println!("{}", "cargo:rerun-if-changed=src/commands/helper/".to_string() + "quickjs.h");
-    println!("{}", "cargo:rerun-if-changed=src/commands/helper/".to_string() + "lre_exec_backtrack.h");
-    build.include("src/commands/helper/");
+    println!("{}", "cargo:rerun-if-changed=../../wasm_qjs_helper/helper/".to_string() + "helper.h");
+    println!("{}", "cargo:rerun-if-changed=../../wasm_qjs_helper/helper/".to_string() + "quickjs.h");
+    println!("{}", "cargo:rerun-if-changed=../../wasm_qjs_helper/helper/".to_string() + "lre_exec_backtrack.h");
+    build.include("../../wasm_qjs_helper/helper/");
     build.compile("my-helpers");
 
 
