@@ -57,6 +57,8 @@ macro_rules! impl_native_traits {
             #[allow(unused_mut)]
             #[allow(clippy::too_many_arguments)]
             pub fn call(&self, store: &mut impl AsStoreMut, $( $x: $x, )* ) -> Result<Rets, RuntimeError> {
+                //use std::time::Instant;
+                //let s1 = Instant::now();
                 let anyfunc = unsafe {
                     *self.func
                         .handle
@@ -65,12 +67,14 @@ macro_rules! impl_native_traits {
                         .as_ptr()
                         .as_ref()
                 };
+                //println!("s1: {:?}", s1.elapsed().as_nanos());
                 // Ensure all parameters come from the same context.
                 if $(!FromToNativeWasmType::is_from_store(&$x, store) ||)* false {
                     return Err(RuntimeError::new(
                         "cross-`Context` values are not supported",
                     ));
                 }
+                //println!("s2: {:?}", s1.elapsed().as_nanos());
                 // TODO: when `const fn` related features mature more, we can declare a single array
                 // of the correct size here.
                 let mut params_list = [ $( $x.to_native().into_raw(store) ),* ];
@@ -87,8 +91,7 @@ macro_rules! impl_native_traits {
                     }
                     rets_list.as_mut()
                 };
-                use std::time::Instant;
-                let start = Instant::now();
+                //println!("s3: {:?}", s1.elapsed().as_nanos());
                 unsafe {
                     wasmer_vm::wasmer_call_trampoline(
                         store.as_store_ref().signal_handler(),
@@ -98,7 +101,7 @@ macro_rules! impl_native_traits {
                         args_rets.as_mut_ptr() as *mut u8,
                     )
                 }?;
-                println!("inner take: {:?}", start.elapsed());
+                //println!("s4: {:?}", s1.elapsed().as_nanos());
                 let num_rets = rets_list.len();
                 if !using_rets_array && num_rets > 0 {
                     let src_pointer = params_list.as_ptr();
@@ -111,6 +114,8 @@ macro_rules! impl_native_traits {
                                                         num_rets);
                     }
                 }
+                //println!("s5: {:?}", s1.elapsed().as_nanos());
+                //println!("s1 end: {:?}", s1.elapsed().as_nanos());
                 Ok(unsafe { Rets::from_array(store, rets_list_array) })
                 // TODO: When the Host ABI and Wasm ABI are the same, we could do this instead:
                 // but we can't currently detect whether that's safe.
