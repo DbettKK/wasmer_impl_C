@@ -87,6 +87,8 @@ macro_rules! impl_native_traits {
                     }
                     rets_list.as_mut()
                 };
+                use std::time::Instant;
+                let start = Instant::now();
                 unsafe {
                     wasmer_vm::wasmer_call_trampoline(
                         store.as_store_ref().signal_handler(),
@@ -96,6 +98,7 @@ macro_rules! impl_native_traits {
                         args_rets.as_mut_ptr() as *mut u8,
                     )
                 }?;
+                println!("inner take: {:?}", start.elapsed());
                 let num_rets = rets_list.len();
                 if !using_rets_array && num_rets > 0 {
                     let src_pointer = params_list.as_ptr();

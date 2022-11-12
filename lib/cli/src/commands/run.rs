@@ -349,7 +349,11 @@ impl Run {
                                             unwrap().typed(&mut store).unwrap();
 
                     let mut js_def_realloc_c = |m: i32, ptr: i32, size: i32| -> i32 {
-                        js_def_realloc.call(&mut store, m, ptr, size).unwrap()
+                        use std::time::Instant;
+                        let start = Instant::now();
+                        let ret = js_def_realloc.call(&mut store, m, ptr, size).unwrap();
+                        println!("outer take: {:?}", start.elapsed());
+                        ret
                     };
                     unsafe {
                         register_wasm_js_realloc_def(get_wasm_js_realloc_def(&mut js_def_realloc_c), 
