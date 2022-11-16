@@ -345,7 +345,7 @@ impl Run {
                             &mut realloc_closure as *mut _ as *mut c_void);
                     }
 
-                    let mut js_def_realloc: TypedFunction<(i32, i32, i32), i32> = instance.exports.get_function("js_def_realloc").
+                    let js_def_realloc: TypedFunction<(i32, i32, i32), i32> = instance.exports.get_function("js_def_realloc").
                                             unwrap().typed(&mut store).unwrap();
                                             
                     let mut js_def_realloc_c = |m: i32, ptr: i32, size: i32| -> i32 {
@@ -354,9 +354,6 @@ impl Run {
                     unsafe {
                         register_wasm_js_realloc_def(get_wasm_js_realloc_def(&mut js_def_realloc_c), 
                             &mut js_def_realloc_c as *mut _ as *mut c_void)
-                    }
-                    unsafe {
-                        register_instance_store(wasm_js_realloc_def_new, &mut js_def_realloc as *mut _ as *mut c_void, &mut store as *mut _ as *mut c_void);
                     }
                     // ...
                     self.inner_module_run(store, instance)
@@ -956,7 +953,6 @@ extern "C" {
         cl: *mut c_void
     );
     fn get_linear_memory(mem: *mut u8);
-    fn register_instance_store(func: extern "C" fn(state: i32, ptr: i32, size: i32, ins: *mut c_void, store: *mut c_void) -> i32, ins: *mut c_void, store: *mut c_void);
 }
 
 extern "C" fn wasm_js_realloc<F>(table_index: i32, state: i32, ptr: i32, size: u32, closure: *mut c_void) -> i32 
@@ -985,13 +981,5 @@ where F: FnMut(i32, i32, i32) -> i32 {
     wasm_js_realloc_def::<F>
 }
 
-extern "C" fn wasm_js_realloc_def_new(state: i32, ptr: i32, size: i32, ins: *mut c_void, store: *mut c_void) -> i32 {
-    unsafe {
-        let instance = &mut *(ins as *mut TypedFunction<(i32, i32, i32), i32>);
-        //let mut store: &Store = &mut *(store as *mut Store);
-        instance.call(&mut *(store as *mut Store), state, ptr, size).unwrap()
-    }
-}
 
-use std::time::Instant;
 
