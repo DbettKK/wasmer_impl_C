@@ -32,6 +32,7 @@ jobs:
           echo ::set-output name=DOING_RELEASE::${DOING_RELEASE}
           echo $VERSION
           echo $DOING_RELEASE
+          git submodule update --init
 
   build:
     name: Build on ${{ matrix.build }}
