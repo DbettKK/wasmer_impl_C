@@ -38,8 +38,10 @@ SHELL=/usr/bin/env bash
 #####
 
 
+
 IS_DARWIN := 0
 IS_LINUX := 0
+IS_FREEBSD := 0
 IS_WINDOWS := 0
 IS_AMD64 := 0
 IS_AARCH64 := 0
@@ -57,6 +59,8 @@ else
 		IS_DARWIN := 1
 	else ifeq ($(uname), Linux)
 		IS_LINUX := 1
+	else ifeq ($(uname), FreeBSD)
+		IS_FREEBSD := 1
 	else
 		# We use spaces instead of tabs to indent `$(error)`
 		# otherwise it's considered as a command outside a
@@ -67,7 +71,7 @@ else
 	# Architecture
 	uname := $(shell uname -m)
 
-	ifeq ($(uname), x86_64)
+	ifneq (, $(filter $(uname), x86_64 amd64))
 		IS_AMD64 := 1
 	else ifneq (, $(filter $(uname), aarch64 arm64))
 		IS_AARCH64 := 1
@@ -90,7 +94,12 @@ endif
 #####
 
 CARGO_BINARY ?= cargo
-CARGO_TARGET ?=
+CARGO_TARGET ?= 
+CARGO_TARGET_FLAG ?=
+
+ifneq ($(CARGO_TARGET),)
+CARGO_TARGET_FLAG := --target $(CARGO_TARGET)
+endif
 
 # Variables that can be overridden by the users to force to enable or
 # to disable a specific compiler.
@@ -117,32 +126,32 @@ endif
 ##
 
 # If the user didn't disable the LLVM compiler…
-ifneq ($(ENABLE_LLVM), 0)
+ifeq ($(ENABLE_LLVM), 0)
+	LLVM_VERSION :=
 	# … then maybe the user forced to enable the LLVM compiler.
-	ifeq ($(ENABLE_LLVM), 1)
-		LLVM_VERSION := $(shell llvm-config --version)
-		compilers += llvm
-	# … otherwise, we try to autodetect LLVM from `llvm-config`
-	else ifneq (, $(shell which llvm-config 2>/dev/null))
-		LLVM_VERSION := $(shell llvm-config --version)
-
-		# If findstring is not empty, then it have found the value
-		ifneq (, $(findstring 13,$(LLVM_VERSION)))
-			compilers += llvm
-		else ifneq (, $(findstring 12,$(LLVM_VERSION)))
-			compilers += llvm
-		endif
+else ifeq ($(ENABLE_LLVM), 1)
+	LLVM_VERSION := $(shell llvm-config --version)
+	compilers += llvm
 	# … or try to autodetect LLVM from `llvm-config-<version>`.
-	else
-		ifneq (, $(shell which llvm-config-13 2>/dev/null))
-			LLVM_VERSION := $(shell llvm-config-13 --version)
-			compilers += llvm
-		else ifneq (, $(shell which llvm-config-12 2>/dev/null))
-			LLVM_VERSION := $(shell llvm-config-12 --version)
-			compilers += llvm
-		endif
+else ifneq (, $(shell which llvm-config-13 2>/dev/null))
+	LLVM_VERSION := $(shell llvm-config-13 --version)
+	compilers += llvm
+	# need force LLVM_SYS_120_PREFIX, or llvm_sys will not build in the case
+	export LLVM_SYS_120_PREFIX = $(shell llvm-config-13 --prefix)
+else ifneq (, $(shell which llvm-config-12 2>/dev/null))
+	LLVM_VERSION := $(shell llvm-config-12 --version)
+	compilers += llvm
+	# … otherwise, we try to autodetect LLVM from `llvm-config`
+else ifneq (, $(shell which llvm-config 2>/dev/null))
+	LLVM_VERSION := $(shell llvm-config --version)
+	ifneq (, $(findstring 13,$(LLVM_VERSION)))
+		compilers += llvm
+	else ifneq (, $(findstring 12,$(LLVM_VERSION)))
+		compilers += llvm
 	endif
 endif
+
+# If findstring is not empty, then it have found the value
 
 exclude_tests := --exclude wasmer-c-api --exclude wasmer-cli --exclude wasmer-compiler-cli
 # Is failing to compile in Linux for some reason
@@ -168,7 +177,7 @@ ifneq ($(ENABLE_SINGLEPASS), 0)
 	ifeq ($(ENABLE_SINGLEPASS), 1)
 		compilers += singlepass
 	# … otherwise, we try to check whether Singlepass works on this host.
-	else ifneq (, $(filter 1, $(IS_DARWIN) $(IS_LINUX) $(IS_WINDOWS)))
+	else ifneq (, $(filter 1, $(IS_DARWIN) $(IS_LINUX) $(IS_FREEBSD) $(IS_WINDOWS)))
 		ifeq ($(IS_AMD64), 1)
 			compilers += singlepass
 		endif
@@ -215,7 +224,7 @@ endif
 ##
 
 ifeq ($(ENABLE_LLVM), 1)
-	ifneq (, $(filter 1, $(IS_WINDOWS) $(IS_DARWIN) $(IS_LINUX)))
+	ifneq (, $(filter 1, $(IS_WINDOWS) $(IS_DARWIN) $(IS_LINUX) $(IS_FREEBSD)))
 		ifeq ($(IS_AMD64), 1)
 			compilers_engines += llvm-universal
 		else ifeq ($(IS_AARCH64), 1)
@@ -229,7 +238,7 @@ endif
 ##
 
 ifeq ($(ENABLE_SINGLEPASS), 1)
-	ifneq (, $(filter 1, $(IS_WINDOWS) $(IS_DARWIN) $(IS_LINUX)))
+	ifneq (, $(filter 1, $(IS_WINDOWS) $(IS_DARWIN) $(IS_LINUX) $(IS_FREEBSD)))
 		ifeq ($(IS_AMD64), 1)
 			compilers_engines += singlepass-universal
 		endif
@@ -274,7 +283,7 @@ capi_compilers_engines := $(filter-out $(capi_compilers_engines_exclude),$(compi
 #
 #####
 
-ifneq (, $(filter 1, $(IS_DARWIN) $(IS_LINUX)))
+ifneq (, $(filter 1, $(IS_DARWIN) $(IS_LINUX) $(IS_FREEBSD)))
 	bold := $(shell tput bold 2>/dev/null || echo -n '')
 	green := $(shell tput setaf 2 2>/dev/null || echo -n '')
 	yellow := $(shell tput setaf 3 2>/dev/null || echo -n '')
@@ -335,6 +344,8 @@ SEDI ?=
 
 ifeq ($(IS_DARWIN), 1)
 	SEDI := "-i ''"
+else ifeq ($(IS_FREEBSD), 1)
+	SEDI := "-i ''"
 else ifeq ($(IS_LINUX), 1)
 	SEDI := "-i"
 endif
@@ -352,23 +363,24 @@ all: build-wasmer build-capi
 check: check-wasmer check-wasmer-wasm check-capi
 
 check-wasmer:
-	$(CARGO_BINARY) check $(CARGO_TARGET) --manifest-path lib/cli/Cargo.toml $(compiler_features) --bin wasmer
+	$(CARGO_BINARY) check $(CARGO_TARGET_FLAG) --manifest-path lib/cli/Cargo.toml $(compiler_features) --bin wasmer
 
 check-wasmer-wasm:
 	$(CARGO_BINARY) check --manifest-path lib/cli-compiler/Cargo.toml --target wasm32-wasi --features singlepass,cranelift --bin wasmer-compiler
 
-check-capi: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) check $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml  \
+check-capi:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) check $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml  \
 		--no-default-features --features wat,compiler,wasi,middlewares $(capi_compiler_features)
 
+
 build-wasmer:
-	$(CARGO_BINARY) build $(CARGO_TARGET) --release --manifest-path lib/cli/Cargo.toml $(compiler_features) --features="webc_runner" --bin wasmer
+	$(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --release --manifest-path lib/cli/Cargo.toml $(compiler_features) --features="webc_runner" --bin wasmer
 
 build-wasmer-debug:
-	$(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/cli/Cargo.toml $(compiler_features) --features "webc_runner,debug"  --bin wasmer
+	$(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/cli/Cargo.toml $(compiler_features) --features "webc_runner,debug"  --bin wasmer
 
 bench:
-	$(CARGO_BINARY) bench $(CARGO_TARGET) $(compiler_features)
+	$(CARGO_BINARY) bench $(CARGO_TARGET_FLAG) $(compiler_features)
 
 build-wasmer-wasm:
 	$(CARGO_BINARY) build --release --manifest-path lib/cli-compiler/Cargo.toml --target wasm32-wasi --features singlepass,cranelift --bin wasmer-compiler
@@ -396,76 +408,59 @@ else
 	strip --strip-unneeded target/$(HOST_TARGET)/release/wasmer-headless
 endif
 
-WAPM_VERSION = v0.5.3
-get-wapm:
-	[ -d "wapm-cli" ] || git clone --branch $(WAPM_VERSION) https://github.com/wasmerio/wapm-cli.git
-
-build-wapm: get-wapm
-ifeq ($(IS_DARWIN), 1)
-	# We build it without bundling sqlite, as is included by default in macos
-	$(CARGO_BINARY) build $(CARGO_TARGET) --release --manifest-path wapm-cli/Cargo.toml --no-default-features --features "full packagesigning telemetry update-notifications"
-else
-	$(CARGO_BINARY) build $(CARGO_TARGET) --release --manifest-path wapm-cli/Cargo.toml --features "telemetry update-notifications"
-endif
-
 build-docs:
-	$(CARGO_BINARY) doc $(CARGO_TARGET) --release $(compiler_features) --document-private-items --no-deps --workspace --exclude wasmer-c-api
+	$(CARGO_BINARY) doc $(CARGO_TARGET_FLAG) --release $(compiler_features) --document-private-items --no-deps --workspace --exclude wasmer-c-api
 
-capi-setup:
-ifeq ($(IS_WINDOWS), 1)
-  RUSTFLAGS += -C target-feature=+crt-static
-endif
-
-build-docs-capi: capi-setup
+build-docs-capi:
 	# `wasmer-c-api` lib's name is `wasmer`. To avoid a conflict
 	# when generating the documentation, we rename it to its
 	# crate's name. Then we restore the lib's name.
 	sed "$(SEDI)"  -e 's/name = "wasmer" # ##lib.name##/name = "wasmer_c_api" # ##lib.name##/' lib/c-api/Cargo.toml
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) doc $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --no-deps --features wat,compiler,cranelift,wasi
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) doc $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --no-deps --features wat,compiler,cranelift,wasi
 	sed "$(SEDI)"  -e 's/name = "wasmer_c_api" # ##lib.name##/name = "wasmer" # ##lib.name##/' lib/c-api/Cargo.toml
 
-build-capi: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,wasi,middlewares,webc_runner $(capi_compiler_features)
 
-build-capi-singlepass: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi-singlepass:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,singlepass,wasi,middlewares,webc_runner
 
-build-capi-singlepass-universal: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi-singlepass-universal:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,singlepass,wasi,middlewares,webc_runner
 
-build-capi-cranelift: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi-cranelift:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,cranelift,wasi,middlewares,webc_runner
 
-build-capi-cranelift-universal: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi-cranelift-universal:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,cranelift,wasi,middlewares,webc_runner
 
-build-capi-llvm: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi-llvm:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,llvm,wasi,middlewares,webc_runner
 
-build-capi-llvm-universal: capi-setup
-	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+build-capi-llvm-universal:
+	RUSTFLAGS="${RUSTFLAGS}" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,llvm,wasi,middlewares,webc_runner
 
 # Headless (we include the minimal to be able to run)
 
-build-capi-headless: capi-setup
-ifeq ($(CARGO_TARGET),)
+build-capi-headless:
+ifeq ($(CARGO_TARGET_FLAG),)
 	RUSTFLAGS="${RUSTFLAGS} -C panic=abort -C link-dead-code -C lto -O -C embed-bitcode=yes" $(CARGO_BINARY) build --target $(HOST_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
-		--no-default-features --features compiler-headless,wasi
+		--no-default-features --features compiler-headless,wasi,webc_runner  --target-dir target/$(CARGO_TARGET_FLAG)/headless
 else
-	RUSTFLAGS="${RUSTFLAGS} -C panic=abort -C link-dead-code -C lto -O -C embed-bitcode=yes" $(CARGO_BINARY) build $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
-		--no-default-features --features compiler-headless,wasi
+	RUSTFLAGS="${RUSTFLAGS} -C panic=abort -C link-dead-code -C lto -O -C embed-bitcode=yes" $(CARGO_BINARY) build $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
+		--no-default-features --features compiler-headless,wasi,webc_runner --target-dir target/$(CARGO_TARGET_FLAG)/headless
 endif
 
-build-capi-headless-ios: capi-setup
+build-capi-headless-ios:
 	RUSTFLAGS="${RUSTFLAGS} -C panic=abort" cargo lipo --manifest-path lib/c-api/Cargo.toml --release \
-		--no-default-features --features compiler-headless,wasi
+		--no-default-features --features compiler-headless,wasi,webc_runner --target-dir target/$(CARGO_TARGET_FLAG)/headless
 
 #####
 #
@@ -473,16 +468,37 @@ build-capi-headless-ios: capi-setup
 #
 #####
 
+# test compilers
+test-stage-0-wast:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --tests $(compiler_features)
+
+# test packages
+test-stage-1-test-all:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --all --release $(exclude_tests) --exclude wasmer-c-api-test-runner --exclude wasmer-capi-examples-runner
+test-stage-2-test-compiler-cranelift-nostd:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --manifest-path lib/compiler-cranelift/Cargo.toml --release --no-default-features --features=std
+test-stage-3-test-compiler-singlepass-nostd:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --manifest-path lib/compiler-singlepass/Cargo.toml --release --no-default-features --features=std
+test-stage-4-wasmer-cli:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --manifest-path lib/cli/Cargo.toml $(compiler_features) --release
+
+# test examples 
+test-stage-5-test-examples:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) $(compiler_features) --features wasi --examples
+test-stage-6-test-examples-release:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release $(compiler_features) --features wasi --examples
+
+test-stage-7-capi-integration-tests:
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --package wasmer-c-api-test-runner
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --package wasmer-capi-examples-runner
+
 test: test-compilers test-packages test-examples
 
-test-compilers:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --release --tests $(compiler_features)
+test-compilers: test-stage-0-wast
 
-test-packages:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --all --release $(exclude_tests)
-	$(CARGO_BINARY) test $(CARGO_TARGET) --manifest-path lib/compiler-cranelift/Cargo.toml --release --no-default-features --features=std
-	$(CARGO_BINARY) test $(CARGO_TARGET) --manifest-path lib/compiler-singlepass/Cargo.toml --release --no-default-features --features=std
-	$(CARGO_BINARY) test $(CARGO_TARGET) --manifest-path lib/cli/Cargo.toml $(compiler_features) --release
+test-packages: test-stage-1-test-all test-stage-2-test-compiler-cranelift-nostd test-stage-3-test-compiler-singlepass-nostd test-stage-4-wasmer-cli
+
+test-examples: test-stage-5-test-examples test-stage-6-test-examples-release
 
 test-js: test-js-api test-js-wasi
 
@@ -504,13 +520,13 @@ test-js-wasi:
 test-compilers-compat: $(foreach compiler,$(compilers),test-$(compiler))
 
 test-singlepass-universal:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --release --tests $(compiler_features) -- singlepass::universal
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --tests $(compiler_features) -- singlepass::universal
 
 test-cranelift-universal:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --release --tests $(compiler_features) -- cranelift::universal
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --tests $(compiler_features) -- cranelift::universal
 
 test-llvm-universal:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --release --tests $(compiler_features) -- llvm::universal
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --tests $(compiler_features) -- llvm::universal
 
 test-singlepass: $(foreach singlepass_engine,$(filter singlepass-%,$(compilers_engines)),test-$(singlepass_engine))
 
@@ -518,62 +534,51 @@ test-cranelift: $(foreach cranelift_engine,$(filter cranelift-%,$(compilers_engi
 
 test-llvm: $(foreach llvm_engine,$(filter llvm-%,$(compilers_engines)),test-$(llvm_engine))
 
+# same as test-capi, but without the build-capi step first
+test-capi-ci: $(foreach compiler_engine,$(capi_compilers_engines),test-capi-crate-$(compiler_engine) test-capi-integration-$(compiler_engine))
+
 # This test requires building the capi with all the available
 # compilers first
-test-capi: build-capi package-capi $(foreach compiler_engine,$(capi_compilers_engines),test-capi-crate-$(compiler_engine) test-capi-integration-$(compiler_engine))
+test-capi: build-capi package-capi test-capi-ci
+
 
 test-capi-crate-%:
-	WASMER_CAPI_CONFIG=$(shell echo $@ | sed -e s/test-capi-crate-//) $(CARGO_BINARY) test $(CARGO_TARGET) --manifest-path lib/c-api/Cargo.toml --release \
+	WASMER_CAPI_CONFIG=$(shell echo $@ | sed -e s/test-capi-crate-//) $(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --manifest-path lib/c-api/Cargo.toml --release \
 		--no-default-features --features wat,compiler,wasi,middlewares,webc_runner $(capi_compiler_features) -- --nocapture
 
 test-capi-integration-%:
+	# note: you need to do make build-capi and make package-capi first!
 	# Test the Wasmer C API tests for C
 	cd lib/c-api/tests; WASMER_CAPI_CONFIG=$(shell echo $@ | sed -e s/test-capi-integration-//) WASMER_DIR=`pwd`/../../../package make test
 	# Test the Wasmer C API examples
 	cd lib/c-api/examples; WASMER_CAPI_CONFIG=$(shell echo $@ | sed -e s/test-capi-integration-//) WASMER_DIR=`pwd`/../../../package make run
 
 test-wasi-unit:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --manifest-path lib/wasi/Cargo.toml --release
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --manifest-path lib/wasi/Cargo.toml --release
 
 test-wasi:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --release --tests $(compiler_features) -- wasi::wasitests
-
-test-examples:
-	$(CARGO_BINARY) test $(CARGO_TARGET) $(compiler_features) --features wasi --examples
-	$(CARGO_BINARY) test $(CARGO_TARGET) --release $(compiler_features) --features wasi --examples
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --release --tests $(compiler_features) -- wasi::wasitests
 
 test-integration-cli:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --features webc_runner --no-fail-fast -p wasmer-integration-tests-cli -- --nocapture
+	rustup target add wasm32-wasi
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --features webc_runner --no-fail-fast -p wasmer-integration-tests-cli -- --nocapture --test-threads=1
+
+test-integration-cli-ci:
+	rustup target add wasm32-wasi
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --features webc_runner -p wasmer-integration-tests-cli -- --nocapture --test-threads=1 || $(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --features webc_runner --no-fail-fast -p wasmer-integration-tests-cli -- --nocapture --test-threads=1
 
 test-integration-ios:
-	$(CARGO_BINARY) test $(CARGO_TARGET) --features webc_runner -p wasmer-integration-tests-ios
+	$(CARGO_BINARY) test $(CARGO_TARGET_FLAG) --features webc_runner -p wasmer-integration-tests-ios
 
 generate-wasi-tests:
 # Uncomment the following for installing the toolchain
 #   cargo run -p wasi-test-generator -- -s
-	$(CARGO_BINARY) run $(CARGO_TARGET) -p wasi-test-generator -- -g
+	$(CARGO_BINARY) run $(CARGO_TARGET_FLAG) -p wasi-test-generator -- -g
 #####
 #
 # Packaging.
 #
 #####
-
-package-wapm:
-	mkdir -p "package/bin"
-ifneq (, $(filter 1, $(IS_DARWIN) $(IS_LINUX)))
-	if [ -d "wapm-cli" ]; then \
-		cp wapm-cli/$(TARGET_DIR)/wapm package/bin/ ;\
-		echo -e "#!/bin/bash\nwapm execute \"\$$@\"" > package/bin/wax ;\
-		chmod +x package/bin/wax ;\
-	fi
-else
-	if [ -d "wapm-cli" ]; then \
-		cp wapm-cli/$(TARGET_DIR)/wapm package/bin/ ;\
-	fi
-ifeq ($(IS_DARWIN), 1)
-	codesign -s - package/bin/wapm || true
-endif
-endif
 
 package-minimal-headless-wasmer:
 ifeq ($(IS_WINDOWS), 1)
@@ -588,10 +593,21 @@ endif
 
 package-wasmer:
 	mkdir -p "package/bin"
+	ls -R target
 ifeq ($(IS_WINDOWS), 1)
-	cp $(TARGET_DIR)/wasmer.exe package/bin/
+	if [ -f "$(TARGET_DIR)/wasmer.exe" ]; then \
+		cp "$(TARGET_DIR)/wasmer.exe" package/bin ;\
+	fi
+	if [ -f "target/$(HOST_TARGET)/release/wasmer.exe" ]; then \
+		cp "target/$(HOST_TARGET)/release/wasmer.exe" package/bin ;\
+	fi
 else
-	cp $(TARGET_DIR)/wasmer package/bin/
+	if [ -f "$(TARGET_DIR)/wasmer" ]; then \
+		cp $(TARGET_DIR)/wasmer package/bin ;\
+	fi
+	if [ -f "target/$(HOST_TARGET)/release/wasmer" ]; then \
+		cp "target/$(HOST_TARGET)/release/wasmer" package/bin ;\
+	fi
 ifeq ($(IS_DARWIN), 1)
 	codesign -s - package/bin/wasmer || true
 endif
@@ -604,27 +620,74 @@ package-capi:
 	cp lib/c-api/wasmer_wasm.h* package/include
 	cp lib/c-api/tests/wasm-c-api/include/wasm.h* package/include
 	cp lib/c-api/README.md package/include/README.md
-
 	if [ -f $(TARGET_DIR)/wasmer.dll ]; then \
 		cp $(TARGET_DIR)/wasmer.dll package/lib/wasmer.dll ;\
 	fi
 	
+	if [ -f target/headless/$(CARGO_TARGET)/release/wasmer.dll ]; then \
+		cp target/headless/$(CARGO_TARGET)/release/wasmer.dll package/lib/wasmer-headless.dll ;\
+	fi
+
 	if [ -f $(TARGET_DIR)/wasmer.dll.lib ]; then \
 		cp $(TARGET_DIR)/wasmer.dll.lib package/lib/wasmer.dll.lib ;\
 	fi
+
+	if [ -f target/headless/$(CARGO_TARGET)/release/wasmer.dll.lib ]; then \
+		cp target/headless/$(CARGO_TARGET)/release/wasmer.dll.lib package/lib/wasmer-headless.dll.lib ;\
+	fi
+
 	if [ -f $(TARGET_DIR)/wasmer.lib ]; then \
 		cp $(TARGET_DIR)/wasmer.lib package/lib/wasmer.lib ;\
+	fi
+
+	if [ -f target/headless/$(CARGO_TARGET)/release/wasmer.lib ]; then \
+		cp target/headless/$(CARGO_TARGET)/release/wasmer.lib package/lib/wasmer-headless.lib ;\
 	fi
 
 	if [ -f $(TARGET_DIR)/libwasmer.dylib ]; then \
 		cp $(TARGET_DIR)/libwasmer.dylib package/lib/libwasmer.dylib ;\
 	fi
 
+	if [ -f target/headless/$(CARGO_TARGET)/release/libwasmer.dylib ]; then \
+		cp target/headless/$(CARGO_TARGET)/release/libwasmer.dylib package/lib/libwasmer-headless.dylib ;\
+	fi
+
 	if [ -f $(TARGET_DIR)/libwasmer.so ]; then \
 		cp $(TARGET_DIR)/libwasmer.so package/lib/libwasmer.so ;\
 	fi
+
+	if [ -f target/headless/$(CARGO_TARGET)/release/libwasmer.so ]; then \
+		cp target/headless/$(CARGO_TARGET)/release/libwasmer.so package/lib/libwasmer-headless.so ;\
+	fi
+
 	if [ -f $(TARGET_DIR)/libwasmer.a ]; then \
 		cp $(TARGET_DIR)/libwasmer.a package/lib/libwasmer.a ;\
+	fi
+
+	if [ -f target/headless/$(CARGO_TARGET)/release/libwasmer.a ]; then \
+		cp target/headless/$(CARGO_TARGET)/release/libwasmer.a package/lib/libwasmer-headless.a ;\
+	fi
+
+	if [ -f target/$(HOST_TARGET)/release/wasmer.dll ]; then \
+		cp target/$(HOST_TARGET)/release/wasmer.dll package/lib/wasmer.dll ;\
+	fi
+	
+	if [ -f target/$(HOST_TARGET)/release/wasmer.dll.lib ]; then \
+		cp target/$(HOST_TARGET)/release/wasmer.dll.lib package/lib/wasmer.dll.lib ;\
+	fi
+	if [ -f target/$(HOST_TARGET)/release/wasmer.lib ]; then \
+		cp target/$(HOST_TARGET)/release/wasmer.lib package/lib/wasmer.lib ;\
+	fi
+
+	if [ -f target/$(HOST_TARGET)/release/libwasmer.dylib ]; then \
+		cp target/$(HOST_TARGET)/release/libwasmer.dylib package/lib/libwasmer.dylib ;\
+	fi
+
+	if [ -f target/$(HOST_TARGET)/release/libwasmer.so ]; then \
+		cp target/$(HOST_TARGET)/release/libwasmer.so package/lib/libwasmer.so ;\
+	fi
+	if [ -f target/$(HOST_TARGET)/release/libwasmer.a ]; then \
+		cp target/$(HOST_TARGET)/release/libwasmer.a package/lib/libwasmer.a ;\
 	fi
 
 package-capi-headless: build-capi-headless
@@ -660,6 +723,55 @@ package-docs: build-docs build-docs-capi
 	echo '<meta http-equiv="refresh" content="0; url=wasmer/index.html">' > package/docs/crates/index.html
 
 package: package-wasmer package-minimal-headless-wasmer package-capi
+
+tar-capi:
+	ls -R package
+	tar -C package -zcvf build-capi.tar.gz lib include
+
+untar-capi:
+	mkdir -p package
+	mkdir -p target/release
+	mkdir -p target/$(HOST_TARGET)/release
+	tar -C package -xf ./build-capi.tar.gz
+	cp package/lib/* target/release
+	cp package/lib/* target/$(HOST_TARGET)/release
+	mkdir -p target/debug
+	mkdir -p target/$(HOST_TARGET)/debug
+	tar -C package -xf ./build-capi.tar.gz
+	cp package/lib/* target/debug
+	cp package/lib/* target/$(HOST_TARGET)/debug
+	echo "untar capi"
+	ls -R target
+	echo "package"
+	ls -R package
+
+tar-wasmer:
+	ls -R package
+	tar -C package -zcvf build-wasmer.tar.gz bin
+
+untar-wasmer:
+	mkdir -p package
+	mkdir -p target/release
+	mkdir -p target/$(HOST_TARGET)/release
+	tar -C package -xf ./build-wasmer.tar.gz
+	cp package/bin/* target/release
+	cp package/bin/* target/$(HOST_TARGET)/release
+	mkdir -p target/debug
+	mkdir -p target/$(HOST_TARGET)/debug
+	tar -C package -xf ./build-wasmer.tar.gz
+	cp package/bin/* target/debug
+	cp package/bin/* target/$(HOST_TARGET)/debug
+	echo "untar wasmer"
+	ls -R target
+	echo "package"
+	ls -R package
+
+distribution-gnu: package-capi
+	cp LICENSE package/LICENSE
+	cp ATTRIBUTIONS.md package/ATTRIBUTIONS
+	mkdir -p dist
+	tar -C package -zcvf wasmer.tar.gz lib include winsdk LICENSE ATTRIBUTIONS
+	mv wasmer.tar.gz dist/
 
 distribution: package
 	cp LICENSE package/LICENSE
@@ -748,3 +860,6 @@ install-local: package
 test-minimal-versions:
 	rm -f Cargo.lock
 	cargo +nightly build --tests -Z minimal-versions --all-features
+
+update-graphql-schema:
+	curl -sSfL https://registry.wapm.io/graphql/schema.graphql > lib/registry/graphql/schema.graphql

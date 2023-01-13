@@ -1,4 +1,5 @@
 use clap::Parser;
+use wasmer_registry::WasmerConfig;
 
 /// Subcommand for listing packages
 #[derive(Debug, Copy, Clone, Parser)]
@@ -8,11 +9,12 @@ impl List {
     /// execute [List]
     pub fn execute(&self) -> Result<(), anyhow::Error> {
         use prettytable::{format, row, Table};
-
-        let rows = wasmer_registry::get_all_local_packages(None)
+        let wasmer_dir =
+            WasmerConfig::get_wasmer_dir().map_err(|e| anyhow::anyhow!("no wasmer dir: {e}"))?;
+        let rows = wasmer_registry::get_all_local_packages(&wasmer_dir)
             .into_iter()
             .filter_map(|pkg| {
-                let package_root_path = pkg.get_path().ok()?;
+                let package_root_path = pkg.path;
                 let (manifest, _) =
                     wasmer_registry::get_executable_file_from_path(&package_root_path, None)
                         .ok()?;
@@ -36,7 +38,7 @@ impl List {
         if empty_table {
             table.add_empty_row();
         }
-        let _ = table.printstd();
+        table.printstd();
 
         Ok(())
     }

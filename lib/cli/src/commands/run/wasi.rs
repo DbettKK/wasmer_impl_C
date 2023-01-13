@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use wasmer::{AsStoreMut, FunctionEnv, Instance, Module, RuntimeError, Value, TypedFunction, Function};
 use wasmer_wasi::{
-    get_wasi_versions, import_object_for_all_wasi_versions, is_wasix_module, WasiEnv, WasiError,
-    WasiState, WasiVersion,
+    get_wasi_versions, import_object_for_all_wasi_versions, is_wasix_module,
+    wasi_import_shared_memory, WasiEnv, WasiError, WasiState, WasiVersion,
 };
 
 use clap::Parser;
@@ -104,7 +104,8 @@ impl Wasi {
             is_wasix_module(module),
             std::sync::atomic::Ordering::Release,
         );
-        let mut import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
+        let mut mut import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
+        wasi_import_shared_memory(&mut import_object, module, store);
 
         import_object.define("env", "my_lre_exec_backtrack", Function::new_typed(store, wrap_lre_exec_backtrack));
 

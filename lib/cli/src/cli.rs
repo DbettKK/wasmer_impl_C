@@ -10,10 +10,12 @@ use crate::commands::CreateExe;
 use crate::commands::CreateObj;
 #[cfg(feature = "wast")]
 use crate::commands::Wast;
-use crate::commands::{Cache, Config, Inspect, List, Run, SelfUpdate, Validate};
+use crate::commands::{
+    Add, Cache, Config, GenCHeader, Init, Inspect, List, Login, Publish, Run, SelfUpdate, Validate,
+    Whoami,
+};
 use crate::error::PrettyError;
 use clap::{CommandFactory, ErrorKind, Parser};
-use std::fmt;
 
 #[derive(Parser, Debug)]
 #[cfg_attr(
@@ -37,24 +39,27 @@ use std::fmt;
 /// The options for the wasmer Command Line Interface
 enum WasmerCLIOptions {
     /// List all locally installed packages
-    #[clap(name = "list")]
     List(List),
 
     /// Run a WebAssembly file. Formats accepted: wasm, wat
-    #[clap(name = "run")]
     Run(Run),
 
+    /// Login into a wapm.io-like registry
+    Login(Login),
+
+    /// Login into a wapm.io-like registry
+    #[clap(name = "publish")]
+    Publish(Publish),
+
     /// Wasmer cache
-    #[clap(subcommand, name = "cache")]
+    #[clap(subcommand)]
     Cache(Cache),
 
     /// Validate a WebAssembly binary
-    #[clap(name = "validate")]
     Validate(Validate),
 
     /// Compile a WebAssembly binary
     #[cfg(feature = "compiler")]
-    #[clap(name = "compile")]
     Compile(Compile),
 
     /// Compile a WebAssembly binary into a native executable
@@ -124,9 +129,11 @@ enum WasmerCLIOptions {
     #[structopt(name = "create-obj", verbatim_doc_comment)]
     CreateObj(CreateObj),
 
+    /// Generate the C static_defs.h header file for the input .wasm module
+    GenCHeader(GenCHeader),
+
     /// Get various configuration information needed
     /// to compile programs which use Wasmer
-    #[clap(name = "config")]
     Config(Config),
 
     /// Update wasmer to the latest version
@@ -134,18 +141,25 @@ enum WasmerCLIOptions {
     SelfUpdate(SelfUpdate),
 
     /// Inspect a WebAssembly file
-    #[clap(name = "inspect")]
     Inspect(Inspect),
+
+    /// Initializes a new wasmer.toml file
+    #[clap(name = "init")]
+    Init(Init),
 
     /// Run spec testsuite
     #[cfg(feature = "wast")]
-    #[clap(name = "wast")]
     Wast(Wast),
 
     /// Unregister and/or register wasmer as binfmt interpreter
     #[cfg(target_os = "linux")]
-    #[clap(name = "binfmt")]
     Binfmt(Binfmt),
+
+    /// Shows the current logged in user for the current active registry
+    Whoami(Whoami),
+
+    /// Add a WAPM package's bindings to your application.
+    Add(Add),
 }
 
 impl WasmerCLIOptions {
@@ -163,11 +177,17 @@ impl WasmerCLIOptions {
             Self::CreateObj(create_obj) => create_obj.execute(),
             Self::Config(config) => config.execute(),
             Self::Inspect(inspect) => inspect.execute(),
+            Self::Init(init) => init.execute(),
             Self::List(list) => list.execute(),
+            Self::Login(login) => login.execute(),
+            Self::Publish(publish) => publish.execute(),
+            Self::GenCHeader(gen_heder) => gen_heder.execute(),
             #[cfg(feature = "wast")]
             Self::Wast(wast) => wast.execute(),
             #[cfg(target_os = "linux")]
             Self::Binfmt(binfmt) => binfmt.execute(),
+            Self::Whoami(whoami) => whoami.execute(),
+            Self::Add(install) => install.execute(),
         }
     }
 }
@@ -219,8 +239,9 @@ fn wasmer_main_inner() -> Result<(), anyhow::Error> {
         WasmerCLIOptions::Run(Run::from_binfmt_args())
     } else {
         match command.unwrap_or(&"".to_string()).as_ref() {
-            "cache" | "compile" | "config" | "create-exe" | "help" | "inspect" | "run"
-            | "self-update" | "validate" | "wast" | "binfmt" | "list" => WasmerCLIOptions::parse(),
+            "add" | "cache" | "compile" | "config" | "create-obj" | "create-exe" | "help"
+            | "gen-c-header" | "inspect" | "init" | "run" | "self-update" | "validate" | "wast"
+            | "binfmt" | "list" | "login" | "publish" => WasmerCLIOptions::parse(),
             _ => {
                 WasmerCLIOptions::try_parse_from(args.iter()).unwrap_or_else(|e| {
                     match e.kind() {
@@ -235,208 +256,7 @@ fn wasmer_main_inner() -> Result<(), anyhow::Error> {
         }
     };
 
-    // Check if the file is a package name
-    if let WasmerCLIOptions::Run(r) = &options {
-        #[cfg(not(feature = "debug"))]
-        let debug = false;
-        #[cfg(feature = "debug")]
-        let debug = r.options.debug;
-        return crate::commands::try_run_package_or_file(&args, r, debug);
-    }
-
     options.execute()
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct SplitVersion {
-    pub(crate) original: String,
-    pub(crate) registry: Option<String>,
-    pub(crate) package: String,
-    pub(crate) version: Option<String>,
-    pub(crate) command: Option<String>,
-}
-
-impl fmt::Display for SplitVersion {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let version = self.version.as_deref().unwrap_or("latest");
-        let command = self
-            .command
-            .as_ref()
-            .map(|s| format!(":{s}"))
-            .unwrap_or_default();
-        write!(f, "{}@{version}{command}", self.package)
-    }
-}
-
-#[test]
-fn test_split_version() {
-    assert_eq!(
-        SplitVersion::new("registry.wapm.io/graphql/python/python").unwrap(),
-        SplitVersion {
-            original: "registry.wapm.io/graphql/python/python".to_string(),
-            registry: Some("https://registry.wapm.io/graphql".to_string()),
-            package: "python/python".to_string(),
-            version: None,
-            command: None,
-        }
-    );
-    assert_eq!(
-        SplitVersion::new("registry.wapm.io/python/python").unwrap(),
-        SplitVersion {
-            original: "registry.wapm.io/python/python".to_string(),
-            registry: Some("https://registry.wapm.io/graphql".to_string()),
-            package: "python/python".to_string(),
-            version: None,
-            command: None,
-        }
-    );
-    assert_eq!(
-        SplitVersion::new("namespace/name@version:command").unwrap(),
-        SplitVersion {
-            original: "namespace/name@version:command".to_string(),
-            registry: None,
-            package: "namespace/name".to_string(),
-            version: Some("version".to_string()),
-            command: Some("command".to_string()),
-        }
-    );
-    assert_eq!(
-        SplitVersion::new("namespace/name@version").unwrap(),
-        SplitVersion {
-            original: "namespace/name@version".to_string(),
-            registry: None,
-            package: "namespace/name".to_string(),
-            version: Some("version".to_string()),
-            command: None,
-        }
-    );
-    assert_eq!(
-        SplitVersion::new("namespace/name").unwrap(),
-        SplitVersion {
-            original: "namespace/name".to_string(),
-            registry: None,
-            package: "namespace/name".to_string(),
-            version: None,
-            command: None,
-        }
-    );
-    assert_eq!(
-        SplitVersion::new("registry.wapm.io/namespace/name").unwrap(),
-        SplitVersion {
-            original: "registry.wapm.io/namespace/name".to_string(),
-            registry: Some("https://registry.wapm.io/graphql".to_string()),
-            package: "namespace/name".to_string(),
-            version: None,
-            command: None,
-        }
-    );
-    assert_eq!(
-        format!("{}", SplitVersion::new("namespace").unwrap_err()),
-        "Invalid package version: \"namespace\"".to_string(),
-    );
-}
-
-impl SplitVersion {
-    pub fn new(s: &str) -> Result<SplitVersion, anyhow::Error> {
-        let command = WasmerCLIOptions::command();
-        let mut prohibited_package_names = command.get_subcommands().map(|s| s.get_name());
-
-        let re1 = regex::Regex::new(r#"(.*)/(.*)@(.*):(.*)"#).unwrap();
-        let re2 = regex::Regex::new(r#"(.*)/(.*)@(.*)"#).unwrap();
-        let re3 = regex::Regex::new(r#"(.*)/(.*)"#).unwrap();
-        let re4 = regex::Regex::new(r#"(.*)/(.*):(.*)"#).unwrap();
-
-        let mut no_version = false;
-
-        let captures = if re1.is_match(s) {
-            re1.captures(s)
-                .map(|c| {
-                    c.iter()
-                        .flatten()
-                        .map(|m| m.as_str().to_owned())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        } else if re2.is_match(s) {
-            re2.captures(s)
-                .map(|c| {
-                    c.iter()
-                        .flatten()
-                        .map(|m| m.as_str().to_owned())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        } else if re4.is_match(s) {
-            no_version = true;
-            re4.captures(s)
-                .map(|c| {
-                    c.iter()
-                        .flatten()
-                        .map(|m| m.as_str().to_owned())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        } else if re3.is_match(s) {
-            re3.captures(s)
-                .map(|c| {
-                    c.iter()
-                        .flatten()
-                        .map(|m| m.as_str().to_owned())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
-        } else {
-            return Err(anyhow::anyhow!("Invalid package version: {s:?}"));
-        };
-
-        let mut namespace = match captures.get(1).cloned() {
-            Some(s) => s,
-            None => {
-                return Err(anyhow::anyhow!(
-                    "Invalid package version: {s:?}: no namespace"
-                ))
-            }
-        };
-
-        let name = match captures.get(2).cloned() {
-            Some(s) => s,
-            None => return Err(anyhow::anyhow!("Invalid package version: {s:?}: no name")),
-        };
-
-        let mut registry = None;
-        if namespace.contains('/') {
-            let (r, n) = namespace.rsplit_once('/').unwrap();
-            let mut real_registry = r.to_string();
-            if !real_registry.ends_with("graphql") {
-                real_registry = format!("{real_registry}/graphql");
-            }
-            if !real_registry.contains("://") {
-                real_registry = format!("https://{real_registry}");
-            }
-            registry = Some(real_registry);
-            namespace = n.to_string();
-        }
-
-        let sv = SplitVersion {
-            original: s.to_string(),
-            registry,
-            package: format!("{namespace}/{name}"),
-            version: if no_version {
-                None
-            } else {
-                captures.get(3).cloned()
-            },
-            command: captures.get(if no_version { 3 } else { 4 }).cloned(),
-        };
-
-        let svp = sv.package.clone();
-        anyhow::ensure!(
-            !prohibited_package_names.any(|s| s == sv.package.trim()),
-            "Invalid package name {svp:?}"
-        );
-
-        Ok(sv)
-    }
 }
 
 fn print_help(verbose: bool) -> Result<(), anyhow::Error> {

@@ -101,7 +101,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.61
           target: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v1
         if: matrix.use_sccache != true
@@ -214,9 +213,6 @@ jobs:
      #  shell: bash
      #  run: |
      #    make build-wasmer-wasm
-      - name: Build Wapm binary
-        run: |
-          make build-wapm
       - name: Install Nightly Rust for Headless
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -265,6 +261,60 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  windows_gnu:
+    name: Windows GNU
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Windows-GNU linker
+        shell: bash
+        run: |
+          sudo apt install -y mingw-w64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-pc-windows-gnu
+      - name: Install Windows-GNU target
+        shell: bash
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+      - name: Install Windows 10 SDK with xwin
+        shell: bash
+        run: |
+          mkdir -p /tmp/xwin
+          mkdir -p /tmp/xwindownload
+          mkdir -p /tmp/xwincache
+          git clone https://github.com/wasmerio/xwin --depth=1 /tmp/xwin
+          cargo build --release --manifest-path=/tmp/xwin/Cargo.toml
+          /tmp/xwin/target/release/xwin --accept-license --cache-dir /tmp/xwincache splat --output /tmp/xwindownload
+          mkdir -p /tmp/winsdk
+          cp /tmp/xwindownload/sdk/lib/10.0.20348/um/x86_64/WS2_32.lib /tmp/winsdk/
+          cp /tmp/xwindownload/sdk/lib/10.0.20348/um/x86_64/KERNEL32.lib /tmp/winsdk/
+          cp /tmp/xwindownload/sdk/lib/10.0.20348/um/x86_64/BCRYPT.lib /tmp/winsdk/
+          cp /tmp/xwindownload/sdk/lib/10.0.20348/um/x86_64/ADVAPI32.lib /tmp/winsdk/
+          cp /tmp/xwindownload/sdk/lib/10.0.20348/um/x86_64/USERENV.lib /tmp/winsdk/
+          echo "WinSDK files:"
+          ls -laH /tmp/winsdk
+          echo ""
+          mkdir -p package
+          mkdir -p package/winsdk
+          cp -r /tmp/winsdk/* package/winsdk
+      - name: Build Wasmer C-API without LLVM
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-pc-windows-gnu --manifest-path lib/c-api/Cargo.toml --no-default-features --features wat,compiler,wasi,middlewares,webc_runner --features cranelift,singlepass,wasmer-artifact-create,static-artifact-create,wasmer-artifact-load,static-artifact-load
+        env:
+          RUSTFLAGS: -Cpanic=abort
+      - name: Dist
+        run: |
+          make distribution-gnu
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: 'wasmer-windows-gnu64'
+          path: dist
+          if-no-files-found: error
+          retention-days: 2
+
   linux_aarch64:
     name: Linux aarch64
     runs-on: ubuntu-latest
@@ -272,7 +322,6 @@ jobs:
       - uses: actions/checkout@v2
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.61
           target: aarch64-unknown-linux-gnu
       - name: Build cross image
         run: |
@@ -285,7 +334,7 @@ jobs:
         env:
           CARGO_BINARY: docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${GITHUB_WORKSPACE}:/project -w /project wasmer/aarch64 cross
           CROSS_DOCKER_IN_DOCKER: true
-          CARGO_TARGET: --target aarch64-unknown-linux-gnu
+          CARGO_TARGET: aarch64-unknown-linux-gnu
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: true
           ENABLE_LLVM: 0
@@ -296,7 +345,7 @@ jobs:
         env:
           CARGO_BINARY: docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${GITHUB_WORKSPACE}:/project -w /project wasmer/aarch64 cross
           CROSS_DOCKER_IN_DOCKER: true
-          CARGO_TARGET: --target aarch64-unknown-linux-gnu
+          CARGO_TARGET: aarch64-unknown-linux-gnu
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: true
           ENABLE_LLVM: 0
@@ -308,7 +357,7 @@ jobs:
         env:
           CARGO_BINARY: docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${GITHUB_WORKSPACE}:/project -w /project wasmer/aarch64 cross
           CROSS_DOCKER_IN_DOCKER: true
-          CARGO_TARGET: --target aarch64-unknown-linux-gnu
+          CARGO_TARGET: aarch64-unknown-linux-gnu
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: true
           ENABLE_LLVM: 0
@@ -318,7 +367,7 @@ jobs:
         env:
           CARGO_BINARY: docker run -v /var/run/docker.sock:/var/run/docker.sock -v ${GITHUB_WORKSPACE}:/project -w /project wasmer/aarch64 cross
           CROSS_DOCKER_IN_DOCKER: true
-          CARGO_TARGET: --target aarch64-unknown-linux-gnu
+          CARGO_TARGET: aarch64-unknown-linux-gnu
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
           PKG_CONFIG_ALLOW_CROSS: true
           TARGET: aarch64-unknown-linux-gnu
@@ -332,7 +381,7 @@ jobs:
           retention-days: 2
 
   release:
-    needs: [setup, build, linux_aarch64]
+    needs: [setup, build, linux_aarch64, windows_gnu]
     runs-on: ubuntu-latest
     if: needs.setup.outputs.DOING_RELEASE == '1' || github.event.inputs.release != ''
     steps:
@@ -385,6 +434,15 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: artifacts/wasmer-linux-aarch64/wasmer.tar.gz
           asset_name: wasmer-linux-aarch64.tar.gz
+          asset_content_type: application/gzip
+      - name: Upload Release Asset Windows gnu64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/wasmer-windows-gnu64/wasmer.tar.gz
+          asset_name: wasmer-windows-gnu64.tar.gz
           asset_content_type: application/gzip
       - name: Upload Release Asset Linux amd64 (musl)
         id: upload-release-asset-linux-musl-amd64

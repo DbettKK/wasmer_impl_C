@@ -3,7 +3,6 @@ use crate::codegen_error;
 use crate::common_decl::Size;
 use crate::location::Location as AbstractLocation;
 pub use crate::location::{Multiplier, Reg};
-use crate::machine::CodegenError;
 pub use crate::machine::{Label, Offset};
 use dynasm::dynasm;
 pub use dynasmrt::aarch64::{encode_logical_immediate_32bit, encode_logical_immediate_64bit};
@@ -12,8 +11,8 @@ use dynasmrt::{
     VecAssembler,
 };
 use wasmer_types::{
-    CallingConvention, CustomSection, CustomSectionProtection, FunctionBody, FunctionIndex,
-    FunctionType, SectionBody, Type, VMOffsets,
+    CallingConvention, CompileError, CustomSection, CustomSectionProtection, FunctionBody,
+    FunctionIndex, FunctionType, SectionBody, Type, VMOffsets,
 };
 
 type Assembler = VecAssembler<Aarch64Relocation>;
@@ -92,43 +91,43 @@ pub trait EmitterARM64 {
 
     fn finalize_function(&mut self);
 
-    fn emit_str(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CodegenError>;
-    fn emit_ldr(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CodegenError>;
+    fn emit_str(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CompileError>;
+    fn emit_ldr(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CompileError>;
     fn emit_stur(
         &mut self,
         sz: Size,
         reg: Location,
         addr: GPR,
         offset: i32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_ldur(
         &mut self,
         sz: Size,
         reg: Location,
         addr: GPR,
         offset: i32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_strdb(
         &mut self,
         sz: Size,
         reg: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_stria(
         &mut self,
         sz: Size,
         reg: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_ldria(
         &mut self,
         sz: Size,
         reg: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_stpdb(
         &mut self,
         sz: Size,
@@ -136,7 +135,7 @@ pub trait EmitterARM64 {
         reg2: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_ldpia(
         &mut self,
         sz: Size,
@@ -144,23 +143,48 @@ pub trait EmitterARM64 {
         reg2: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
-    fn emit_ldrb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_ldrh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_ldrsb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_ldrsh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_ldrsw(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_strb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_strh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError>;
+    fn emit_ldrb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_ldrh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_ldrsb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_ldrsh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_ldrsw(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_strb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_strh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
 
-    fn emit_mov(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    fn emit_ldaxr(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_ldaxrb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_ldaxrh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_stlxr(
+        &mut self,
+        sz: Size,
+        status: Location,
+        reg: Location,
+        dst: Location,
+    ) -> Result<(), CompileError>;
+    fn emit_stlxrb(
+        &mut self,
+        sz: Size,
+        status: Location,
+        reg: Location,
+        dst: Location,
+    ) -> Result<(), CompileError>;
+    fn emit_stlxrh(
+        &mut self,
+        sz: Size,
+        status: Location,
+        reg: Location,
+        dst: Location,
+    ) -> Result<(), CompileError>;
 
-    fn emit_movn(&mut self, sz: Size, reg: Location, val: u32) -> Result<(), CodegenError>;
-    fn emit_movz(&mut self, reg: Location, val: u32) -> Result<(), CodegenError>;
-    fn emit_movk(&mut self, reg: Location, val: u32, shift: u32) -> Result<(), CodegenError>;
+    fn emit_mov(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
 
-    fn emit_mov_imm(&mut self, dst: Location, val: u64) -> Result<(), CodegenError>;
+    fn emit_movn(&mut self, sz: Size, reg: Location, val: u32) -> Result<(), CompileError>;
+    fn emit_movz(&mut self, reg: Location, val: u32) -> Result<(), CompileError>;
+    fn emit_movk(&mut self, reg: Location, val: u32, shift: u32) -> Result<(), CompileError>;
+
+    fn emit_mov_imm(&mut self, dst: Location, val: u64) -> Result<(), CompileError>;
 
     fn emit_add(
         &mut self,
@@ -168,35 +192,35 @@ pub trait EmitterARM64 {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_sub(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_mul(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_adds(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_subs(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
     fn emit_add_lsl(
         &mut self,
@@ -205,10 +229,10 @@ pub trait EmitterARM64 {
         src2: Location,
         lsl: u32,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
-    fn emit_cmp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_tst(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    fn emit_cmp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_tst(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
 
     fn emit_lsl(
         &mut self,
@@ -216,28 +240,28 @@ pub trait EmitterARM64 {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_lsr(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_asr(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_ror(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
     fn emit_or(
         &mut self,
@@ -245,21 +269,21 @@ pub trait EmitterARM64 {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_and(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_eor(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
     fn emit_bfc(
         &mut self,
@@ -267,7 +291,7 @@ pub trait EmitterARM64 {
         lsb: u32,
         width: u32,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_bfi(
         &mut self,
         se: Size,
@@ -275,7 +299,7 @@ pub trait EmitterARM64 {
         lsb: u32,
         width: u32,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
     fn emit_udiv(
         &mut self,
@@ -283,14 +307,14 @@ pub trait EmitterARM64 {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_sdiv(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     /// msub : c - a*b -> dst
     fn emit_msub(
         &mut self,
@@ -299,69 +323,69 @@ pub trait EmitterARM64 {
         b: Location,
         c: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
-    fn emit_sxtb(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_sxth(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_sxtw(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_uxtb(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_uxth(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    fn emit_sxtb(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_sxth(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_sxtw(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_uxtb(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_uxth(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
 
-    fn emit_cset(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CodegenError>;
-    fn emit_csetm(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CodegenError>;
+    fn emit_cset(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CompileError>;
+    fn emit_csetm(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CompileError>;
     fn emit_cinc(
         &mut self,
         sz: Size,
         src: Location,
         dst: Location,
         cond: Condition,
-    ) -> Result<(), CodegenError>;
-    fn emit_clz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_rbit(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
+    fn emit_clz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_rbit(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
 
-    fn emit_label(&mut self, label: Label) -> Result<(), CodegenError>;
-    fn emit_load_label(&mut self, reg: GPR, label: Label) -> Result<(), CodegenError>;
-    fn emit_b_label(&mut self, label: Label) -> Result<(), CodegenError>;
+    fn emit_label(&mut self, label: Label) -> Result<(), CompileError>;
+    fn emit_load_label(&mut self, reg: GPR, label: Label) -> Result<(), CompileError>;
+    fn emit_b_label(&mut self, label: Label) -> Result<(), CompileError>;
     fn emit_cbz_label(&mut self, sz: Size, reg: Location, label: Label)
-        -> Result<(), CodegenError>;
+        -> Result<(), CompileError>;
     fn emit_cbnz_label(
         &mut self,
         sz: Size,
         reg: Location,
         label: Label,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_tbz_label(
         &mut self,
         sz: Size,
         reg: Location,
         n: u32,
         label: Label,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_tbnz_label(
         &mut self,
         sz: Size,
         reg: Location,
         n: u32,
         label: Label,
-    ) -> Result<(), CodegenError>;
-    fn emit_bcond_label(&mut self, condition: Condition, label: Label) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
+    fn emit_bcond_label(&mut self, condition: Condition, label: Label) -> Result<(), CompileError>;
     fn emit_bcond_label_far(
         &mut self,
         condition: Condition,
         label: Label,
-    ) -> Result<(), CodegenError>;
-    fn emit_b_register(&mut self, reg: GPR) -> Result<(), CodegenError>;
-    fn emit_call_label(&mut self, label: Label) -> Result<(), CodegenError>;
-    fn emit_call_register(&mut self, reg: GPR) -> Result<(), CodegenError>;
-    fn emit_ret(&mut self) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
+    fn emit_b_register(&mut self, reg: GPR) -> Result<(), CompileError>;
+    fn emit_call_label(&mut self, label: Label) -> Result<(), CompileError>;
+    fn emit_call_register(&mut self, reg: GPR) -> Result<(), CompileError>;
+    fn emit_ret(&mut self) -> Result<(), CompileError>;
 
-    fn emit_udf(&mut self, payload: u16) -> Result<(), CodegenError>;
-    fn emit_dmb(&mut self) -> Result<(), CodegenError>;
-    fn emit_brk(&mut self) -> Result<(), CodegenError>;
+    fn emit_udf(&mut self, payload: u16) -> Result<(), CompileError>;
+    fn emit_dmb(&mut self) -> Result<(), CompileError>;
+    fn emit_brk(&mut self) -> Result<(), CompileError>;
 
-    fn emit_fcmp(&mut self, sz: Size, src1: Location, src2: Location) -> Result<(), CodegenError>;
-    fn emit_fneg(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_fsqrt(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    fn emit_fcmp(&mut self, sz: Size, src1: Location, src2: Location) -> Result<(), CompileError>;
+    fn emit_fneg(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_fsqrt(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
 
     fn emit_fadd(
         &mut self,
@@ -369,28 +393,28 @@ pub trait EmitterARM64 {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_fsub(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_fmul(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_fdiv(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
     fn emit_fmin(
         &mut self,
@@ -398,19 +422,19 @@ pub trait EmitterARM64 {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_fmax(
         &mut self,
         sz: Size,
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
-    fn emit_frintz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_frintn(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_frintm(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
-    fn emit_frintp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    fn emit_frintz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_frintn(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_frintm(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
+    fn emit_frintp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError>;
 
     fn emit_scvtf(
         &mut self,
@@ -418,34 +442,34 @@ pub trait EmitterARM64 {
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_ucvtf(
         &mut self,
         sz_in: Size,
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError>;
-    fn emit_fcvt(&mut self, sz_in: Size, src: Location, dst: Location) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
+    fn emit_fcvt(&mut self, sz_in: Size, src: Location, dst: Location) -> Result<(), CompileError>;
     fn emit_fcvtzs(
         &mut self,
         sz_in: Size,
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
     fn emit_fcvtzu(
         &mut self,
         sz_in: Size,
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError>;
+    ) -> Result<(), CompileError>;
 
-    fn emit_read_fpcr(&mut self, reg: GPR) -> Result<(), CodegenError>;
-    fn emit_write_fpcr(&mut self, reg: GPR) -> Result<(), CodegenError>;
-    fn emit_read_fpsr(&mut self, reg: GPR) -> Result<(), CodegenError>;
-    fn emit_write_fpsr(&mut self, reg: GPR) -> Result<(), CodegenError>;
+    fn emit_read_fpcr(&mut self, reg: GPR) -> Result<(), CompileError>;
+    fn emit_write_fpcr(&mut self, reg: GPR) -> Result<(), CompileError>;
+    fn emit_read_fpsr(&mut self, reg: GPR) -> Result<(), CompileError>;
+    fn emit_write_fpsr(&mut self, reg: GPR) -> Result<(), CompileError>;
 
     fn arch_supports_canonicalize_nan(&self) -> bool {
         true
@@ -458,7 +482,7 @@ pub trait EmitterARM64 {
     fn arch_emit_indirect_call_with_trampoline(
         &mut self,
         _loc: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         codegen_error!("singlepass arch_emit_indirect_call_with_trampoline unimplemented")
     }
 }
@@ -488,7 +512,7 @@ impl EmitterARM64 for Assembler {
         );
     }
 
-    fn emit_str(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CodegenError> {
+    fn emit_str(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CompileError> {
         match (sz, reg, addr) {
             (Size::S64, Location::GPR(reg), Location::Memory(addr, disp)) => {
                 let reg = reg.into_index() as u32;
@@ -560,7 +584,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_ldr(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CodegenError> {
+    fn emit_ldr(&mut self, sz: Size, reg: Location, addr: Location) -> Result<(), CompileError> {
         match (sz, reg, addr) {
             (Size::S64, Location::GPR(reg), Location::Memory(addr, disp)) => {
                 let reg = reg.into_index() as u32;
@@ -662,7 +686,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         addr: GPR,
         offset: i32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!((-255..=255).contains(&offset));
         match (sz, reg) {
             (Size::S64, Location::GPR(reg)) => {
@@ -701,7 +725,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         addr: GPR,
         offset: i32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!((-255..=255).contains(&offset));
         match (sz, reg) {
             (Size::S64, Location::GPR(reg)) => {
@@ -741,7 +765,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!(offset <= 255);
         match (sz, reg) {
             (Size::S64, Location::GPR(reg)) => {
@@ -764,7 +788,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!(offset <= 255);
         match (sz, reg) {
             (Size::S64, Location::GPR(reg)) => {
@@ -787,7 +811,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!(offset <= 255);
         match (sz, reg) {
             (Size::S64, Location::GPR(reg)) => {
@@ -812,7 +836,7 @@ impl EmitterARM64 for Assembler {
         reg2: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!(offset <= 255);
         match (sz, reg1, reg2) {
             (Size::S64, Location::GPR(reg1), Location::GPR(reg2)) => {
@@ -832,7 +856,7 @@ impl EmitterARM64 for Assembler {
         reg2: Location,
         addr: GPR,
         offset: u32,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         assert!(offset <= 255);
         match (sz, reg1, reg2) {
             (Size::S64, Location::GPR(reg1), Location::GPR(reg2)) => {
@@ -846,7 +870,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_ldrb(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_ldrb(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (reg, dst) {
             (Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -871,7 +895,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_ldrh(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_ldrh(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (reg, dst) {
             (Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -896,7 +920,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_ldrsb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_ldrsb(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, reg, dst) {
             (Size::S64, Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -940,7 +964,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_ldrsh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_ldrsh(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, reg, dst) {
             (Size::S64, Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -984,7 +1008,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_ldrsw(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_ldrsw(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, reg, dst) {
             (Size::S64, Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -1009,7 +1033,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_strb(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_strb(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (reg, dst) {
             (Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -1034,7 +1058,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_strh(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_strh(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
         match (reg, dst) {
             (Location::GPR(reg), Location::Memory(addr, offset)) => {
                 let reg = reg.into_index() as u32;
@@ -1060,7 +1084,106 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_mov(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_ldaxr(&mut self, sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
+        match (sz, reg, dst) {
+            (Size::S32, Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                dynasm!(self ; ldaxr W(reg), [X(dst)]);
+            }
+            (Size::S64, Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                dynasm!(self ; ldaxr X(reg), [X(dst)]);
+            }
+            _ => codegen_error!("singlepass can't emit LDAXR {:?}, {:?}", reg, dst),
+        }
+        Ok(())
+    }
+    fn emit_ldaxrb(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
+        match (reg, dst) {
+            (Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                dynasm!(self ; ldaxrb W(reg), [X(dst)]);
+            }
+            _ => codegen_error!("singlepass can't emit LDAXRB {:?}, {:?}", reg, dst),
+        }
+        Ok(())
+    }
+    fn emit_ldaxrh(&mut self, _sz: Size, reg: Location, dst: Location) -> Result<(), CompileError> {
+        match (reg, dst) {
+            (Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                dynasm!(self ; ldaxrh W(reg), [X(dst)]);
+            }
+            _ => codegen_error!("singlepass can't emit LDAXRH {:?}, {:?}", reg, dst),
+        }
+        Ok(())
+    }
+    fn emit_stlxr(
+        &mut self,
+        sz: Size,
+        status: Location,
+        reg: Location,
+        dst: Location,
+    ) -> Result<(), CompileError> {
+        match (sz, status, reg, dst) {
+            (Size::S32, Location::GPR(status), Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                let status = status.into_index() as u32;
+                dynasm!(self ; stlxr W(status), W(reg), [X(dst)]);
+            }
+            (Size::S64, Location::GPR(status), Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                let status = status.into_index() as u32;
+                dynasm!(self ; stlxr W(status), X(reg), [X(dst)]);
+            }
+            _ => codegen_error!("singlepass can't emit STLXR {:?}, {:?}", reg, dst),
+        }
+        Ok(())
+    }
+    fn emit_stlxrb(
+        &mut self,
+        _sz: Size,
+        status: Location,
+        reg: Location,
+        dst: Location,
+    ) -> Result<(), CompileError> {
+        match (status, reg, dst) {
+            (Location::GPR(status), Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                let status = status.into_index() as u32;
+                dynasm!(self ; stlxrb W(status), W(reg), [X(dst)]);
+            }
+            _ => codegen_error!("singlepass can't emit STLXRB {:?}, {:?}", reg, dst),
+        }
+        Ok(())
+    }
+    fn emit_stlxrh(
+        &mut self,
+        _sz: Size,
+        status: Location,
+        reg: Location,
+        dst: Location,
+    ) -> Result<(), CompileError> {
+        match (status, reg, dst) {
+            (Location::GPR(status), Location::GPR(reg), Location::GPR(dst)) => {
+                let reg = reg.into_index() as u32;
+                let dst = dst.into_index() as u32;
+                let status = status.into_index() as u32;
+                dynasm!(self ; stlxrh W(status), W(reg), [X(dst)]);
+            }
+            _ => codegen_error!("singlepass can't emit STLXRH {:?}, {:?}", reg, dst),
+        }
+        Ok(())
+    }
+
+    fn emit_mov(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S64, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -1137,7 +1260,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_movn(&mut self, sz: Size, reg: Location, val: u32) -> Result<(), CodegenError> {
+    fn emit_movn(&mut self, sz: Size, reg: Location, val: u32) -> Result<(), CompileError> {
         match (sz, reg) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg.into_index() as u32;
@@ -1151,7 +1274,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_movz(&mut self, reg: Location, val: u32) -> Result<(), CodegenError> {
+    fn emit_movz(&mut self, reg: Location, val: u32) -> Result<(), CompileError> {
         match reg {
             Location::GPR(reg) => {
                 let reg = reg.into_index() as u32;
@@ -1161,7 +1284,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_movk(&mut self, reg: Location, val: u32, shift: u32) -> Result<(), CodegenError> {
+    fn emit_movk(&mut self, reg: Location, val: u32, shift: u32) -> Result<(), CompileError> {
         match reg {
             Location::GPR(reg) => {
                 let reg = reg.into_index() as u32;
@@ -1172,7 +1295,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_mov_imm(&mut self, dst: Location, val: u64) -> Result<(), CodegenError> {
+    fn emit_mov_imm(&mut self, dst: Location, val: u64) -> Result<(), CompileError> {
         match dst {
             Location::GPR(dst) => {
                 let dst = dst.into_index() as u32;
@@ -1180,6 +1303,12 @@ impl EmitterARM64 for Assembler {
                 let masked = 0xffff & (val >> offset);
                 if (masked << offset) == val {
                     dynasm!(self ; movz X(dst), masked as u32, LSL offset);
+                } else if val >> 16 == 0xffff_ffff_ffff {
+                    let val: u16 = !((val & 0xffff) as u16);
+                    dynasm!(self ; movn X(dst), val as u32);
+                } else if val >> 16 == 0xffff {
+                    let val: u16 = !((val & 0xffff) as u16);
+                    dynasm!(self ; movn W(dst), val as u32);
                 } else {
                     dynasm!(self ; movz W(dst), (val&0xffff) as u32);
                     let val = val >> 16;
@@ -1207,19 +1336,19 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
                 let src2 = src2.into_index() as u32;
                 let dst = dst.into_index() as u32;
-                dynasm!(self ; add X(dst), X(src1), X(src2));
+                dynasm!(self ; add X(dst), X(src1), X(src2), UXTX);
             }
             (Size::S32, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
                 let src2 = src2.into_index() as u32;
                 let dst = dst.into_index() as u32;
-                dynasm!(self ; add W(dst), W(src1), W(src2));
+                dynasm!(self ; add W(dst), W(src1), W(src2), UXTX);
             }
             (Size::S64, Location::GPR(src1), Location::Imm8(imm), Location::GPR(dst))
             | (Size::S64, Location::Imm8(imm), Location::GPR(src1), Location::GPR(dst)) => {
@@ -1277,19 +1406,19 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
                 let src2 = src2.into_index() as u32;
                 let dst = dst.into_index() as u32;
-                dynasm!(self ; sub X(dst), X(src1), X(src2));
+                dynasm!(self ; sub X(dst), X(src1), X(src2), UXTX);
             }
             (Size::S32, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
                 let src2 = src2.into_index() as u32;
                 let dst = dst.into_index() as u32;
-                dynasm!(self ; sub W(dst), W(src1), W(src2));
+                dynasm!(self ; sub W(dst), W(src1), W(src2), UXTX);
             }
             (Size::S64, Location::GPR(src1), Location::Imm8(imm), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1341,7 +1470,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1371,7 +1500,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1431,7 +1560,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1472,7 +1601,7 @@ impl EmitterARM64 for Assembler {
         src2: Location,
         lsl: u32,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1492,7 +1621,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_cmp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_cmp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S64, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -1538,7 +1667,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_tst(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_tst(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S64, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -1582,7 +1711,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1657,7 +1786,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1732,7 +1861,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1807,7 +1936,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1875,7 +2004,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1923,7 +2052,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -1971,7 +2100,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S64, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2020,7 +2149,7 @@ impl EmitterARM64 for Assembler {
         lsb: u32,
         width: u32,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, dst) {
             (Size::S32, Location::GPR(dst)) => {
                 dynasm!(self ; bfc W(dst as u32), lsb, width);
@@ -2039,7 +2168,7 @@ impl EmitterARM64 for Assembler {
         lsb: u32,
         width: u32,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::GPR(src), Location::GPR(dst)) => {
                 dynasm!(self ; bfi W(dst as u32), W(src as u32), lsb, width);
@@ -2058,7 +2187,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2088,7 +2217,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::GPR(src1), Location::GPR(src2), Location::GPR(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2121,7 +2250,7 @@ impl EmitterARM64 for Assembler {
         b: Location,
         c: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, a, b, c, dst) {
             (
                 Size::S32,
@@ -2161,7 +2290,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_sxtb(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_sxtb(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2177,7 +2306,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_sxth(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_sxth(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2193,7 +2322,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_sxtw(&mut self, _sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_sxtw(&mut self, _sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (src, dst) {
             (Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2204,7 +2333,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_uxtb(&mut self, _sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_uxtb(&mut self, _sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (src, dst) {
             (Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2215,7 +2344,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_uxth(&mut self, _sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_uxth(&mut self, _sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (src, dst) {
             (Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2227,7 +2356,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_cset(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CodegenError> {
+    fn emit_cset(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CompileError> {
         match (sz, dst) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg as u32;
@@ -2273,7 +2402,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_csetm(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CodegenError> {
+    fn emit_csetm(&mut self, sz: Size, dst: Location, cond: Condition) -> Result<(), CompileError> {
         match (sz, dst) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg as u32;
@@ -2325,7 +2454,7 @@ impl EmitterARM64 for Assembler {
         src: Location,
         dst: Location,
         cond: Condition,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2374,7 +2503,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_clz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_clz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S64, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2390,7 +2519,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_rbit(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_rbit(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S64, Location::GPR(src), Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -2407,17 +2536,17 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_label(&mut self, label: Label) -> Result<(), CodegenError> {
+    fn emit_label(&mut self, label: Label) -> Result<(), CompileError> {
         dynasm!(self ; => label);
         Ok(())
     }
-    fn emit_load_label(&mut self, reg: GPR, label: Label) -> Result<(), CodegenError> {
+    fn emit_load_label(&mut self, reg: GPR, label: Label) -> Result<(), CompileError> {
         let reg = reg.into_index() as u32;
         dynasm!(self ; adr X(reg), =>label);
         Ok(())
     }
 
-    fn emit_b_label(&mut self, label: Label) -> Result<(), CodegenError> {
+    fn emit_b_label(&mut self, label: Label) -> Result<(), CompileError> {
         dynasm!(self ; b =>label);
         Ok(())
     }
@@ -2426,7 +2555,7 @@ impl EmitterARM64 for Assembler {
         sz: Size,
         reg: Location,
         label: Label,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, reg) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg.into_index() as u32;
@@ -2445,7 +2574,7 @@ impl EmitterARM64 for Assembler {
         sz: Size,
         reg: Location,
         label: Label,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, reg) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg.into_index() as u32;
@@ -2465,7 +2594,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         n: u32,
         label: Label,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, reg) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg.into_index() as u32;
@@ -2491,7 +2620,7 @@ impl EmitterARM64 for Assembler {
         reg: Location,
         n: u32,
         label: Label,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, reg) {
             (Size::S32, Location::GPR(reg)) => {
                 let reg = reg.into_index() as u32;
@@ -2511,7 +2640,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_bcond_label(&mut self, condition: Condition, label: Label) -> Result<(), CodegenError> {
+    fn emit_bcond_label(&mut self, condition: Condition, label: Label) -> Result<(), CompileError> {
         match condition {
             Condition::Eq => dynasm!(self ; b.eq => label),
             Condition::Ne => dynasm!(self ; b.ne => label),
@@ -2535,7 +2664,7 @@ impl EmitterARM64 for Assembler {
         &mut self,
         condition: Condition,
         label: Label,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         let cont: Label = self.get_label();
         match condition {
             // if not condition than continue
@@ -2559,37 +2688,37 @@ impl EmitterARM64 for Assembler {
         self.emit_label(cont)?;
         Ok(())
     }
-    fn emit_b_register(&mut self, reg: GPR) -> Result<(), CodegenError> {
+    fn emit_b_register(&mut self, reg: GPR) -> Result<(), CompileError> {
         dynasm!(self ; br X(reg.into_index() as u32));
         Ok(())
     }
-    fn emit_call_label(&mut self, label: Label) -> Result<(), CodegenError> {
+    fn emit_call_label(&mut self, label: Label) -> Result<(), CompileError> {
         dynasm!(self ; bl =>label);
         Ok(())
     }
-    fn emit_call_register(&mut self, reg: GPR) -> Result<(), CodegenError> {
+    fn emit_call_register(&mut self, reg: GPR) -> Result<(), CompileError> {
         dynasm!(self ; blr X(reg.into_index() as u32));
         Ok(())
     }
-    fn emit_ret(&mut self) -> Result<(), CodegenError> {
+    fn emit_ret(&mut self) -> Result<(), CompileError> {
         dynasm!(self ; ret);
         Ok(())
     }
 
-    fn emit_udf(&mut self, payload: u16) -> Result<(), CodegenError> {
+    fn emit_udf(&mut self, payload: u16) -> Result<(), CompileError> {
         dynasm!(self ; udf (payload as u32));
         Ok(())
     }
-    fn emit_dmb(&mut self) -> Result<(), CodegenError> {
+    fn emit_dmb(&mut self) -> Result<(), CompileError> {
         dynasm!(self ; dmb ish);
         Ok(())
     }
-    fn emit_brk(&mut self) -> Result<(), CodegenError> {
+    fn emit_brk(&mut self) -> Result<(), CompileError> {
         dynasm!(self ; brk 0);
         Ok(())
     }
 
-    fn emit_fcmp(&mut self, sz: Size, src1: Location, src2: Location) -> Result<(), CodegenError> {
+    fn emit_fcmp(&mut self, sz: Size, src1: Location, src2: Location) -> Result<(), CompileError> {
         match (sz, src1, src2) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2)) => {
                 let src1 = src1.into_index() as u32;
@@ -2606,7 +2735,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_fneg(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_fneg(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2622,7 +2751,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_fsqrt(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_fsqrt(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2645,7 +2774,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2), Location::SIMD(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2675,7 +2804,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2), Location::SIMD(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2705,7 +2834,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2), Location::SIMD(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2735,7 +2864,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2), Location::SIMD(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2766,7 +2895,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2), Location::SIMD(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2796,7 +2925,7 @@ impl EmitterARM64 for Assembler {
         src1: Location,
         src2: Location,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz, src1, src2, dst) {
             (Size::S32, Location::SIMD(src1), Location::SIMD(src2), Location::SIMD(dst)) => {
                 let src1 = src1.into_index() as u32;
@@ -2821,7 +2950,7 @@ impl EmitterARM64 for Assembler {
         Ok(())
     }
 
-    fn emit_frintz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_frintz(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2837,7 +2966,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_frintn(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_frintn(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2853,7 +2982,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_frintm(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_frintm(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2869,7 +2998,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_frintp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_frintp(&mut self, sz: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2892,7 +3021,7 @@ impl EmitterARM64 for Assembler {
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz_in, src, sz_out, dst) {
             (Size::S32, Location::GPR(src), Size::S32, Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2930,7 +3059,7 @@ impl EmitterARM64 for Assembler {
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz_in, src, sz_out, dst) {
             (Size::S32, Location::GPR(src), Size::S32, Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2962,7 +3091,7 @@ impl EmitterARM64 for Assembler {
         }
         Ok(())
     }
-    fn emit_fcvt(&mut self, sz_in: Size, src: Location, dst: Location) -> Result<(), CodegenError> {
+    fn emit_fcvt(&mut self, sz_in: Size, src: Location, dst: Location) -> Result<(), CompileError> {
         match (sz_in, src, dst) {
             (Size::S32, Location::SIMD(src), Location::SIMD(dst)) => {
                 let src = src.into_index() as u32;
@@ -2989,7 +3118,7 @@ impl EmitterARM64 for Assembler {
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz_in, src, sz_out, dst) {
             (Size::S32, Location::SIMD(src), Size::S32, Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -3027,7 +3156,7 @@ impl EmitterARM64 for Assembler {
         src: Location,
         sz_out: Size,
         dst: Location,
-    ) -> Result<(), CodegenError> {
+    ) -> Result<(), CompileError> {
         match (sz_in, src, sz_out, dst) {
             (Size::S32, Location::SIMD(src), Size::S32, Location::GPR(dst)) => {
                 let src = src.into_index() as u32;
@@ -3061,20 +3190,20 @@ impl EmitterARM64 for Assembler {
     }
 
     // 1 011 0100 0100 000 => fpcr
-    fn emit_read_fpcr(&mut self, reg: GPR) -> Result<(), CodegenError> {
+    fn emit_read_fpcr(&mut self, reg: GPR) -> Result<(), CompileError> {
         dynasm!(self ; mrs X(reg as u32), 0b1_011_0100_0100_000);
         Ok(())
     }
-    fn emit_write_fpcr(&mut self, reg: GPR) -> Result<(), CodegenError> {
+    fn emit_write_fpcr(&mut self, reg: GPR) -> Result<(), CompileError> {
         dynasm!(self ; msr 0b1_011_0100_0100_000, X(reg as u32));
         Ok(())
     }
     // 1 011 0100 0100 001 => fpsr
-    fn emit_read_fpsr(&mut self, reg: GPR) -> Result<(), CodegenError> {
+    fn emit_read_fpsr(&mut self, reg: GPR) -> Result<(), CompileError> {
         dynasm!(self ; mrs X(reg as u32), 0b1_011_0100_0100_001);
         Ok(())
     }
-    fn emit_write_fpsr(&mut self, reg: GPR) -> Result<(), CodegenError> {
+    fn emit_write_fpsr(&mut self, reg: GPR) -> Result<(), CompileError> {
         dynasm!(self ; msr 0b1_011_0100_0100_001, X(reg as u32));
         Ok(())
     }
@@ -3083,7 +3212,7 @@ impl EmitterARM64 for Assembler {
 pub fn gen_std_trampoline_arm64(
     sig: &FunctionType,
     calling_convention: CallingConvention,
-) -> Result<FunctionBody, CodegenError> {
+) -> Result<FunctionBody, CompileError> {
     let mut a = Assembler::new(0);
 
     let fptr = GPR::X27;
@@ -3134,24 +3263,17 @@ pub fn gen_std_trampoline_arm64(
                 #[allow(clippy::single_match)]
                 match calling_convention {
                     CallingConvention::AppleAarch64 => {
-                        match sz {
-                            Size::S8 => (),
-                            Size::S16 => {
-                                if caller_stack_offset & 1 != 0 {
-                                    caller_stack_offset = (caller_stack_offset + 1) & !1;
-                                }
-                            }
-                            Size::S32 => {
-                                if caller_stack_offset & 3 != 0 {
-                                    caller_stack_offset = (caller_stack_offset + 3) & !3;
-                                }
-                            }
-                            Size::S64 => {
-                                if caller_stack_offset & 7 != 0 {
-                                    caller_stack_offset = (caller_stack_offset + 7) & !7;
-                                }
-                            }
-                        };
+                        let sz = 1
+                            << match sz {
+                                Size::S8 => 0,
+                                Size::S16 => 1,
+                                Size::S32 => 2,
+                                Size::S64 => 3,
+                            };
+                        // align first
+                        if sz > 1 && caller_stack_offset & (sz - 1) != 0 {
+                            caller_stack_offset = (caller_stack_offset + (sz - 1)) & !(sz - 1);
+                        }
                     }
                     _ => (),
                 };
@@ -3168,12 +3290,13 @@ pub fn gen_std_trampoline_arm64(
                 )?;
                 match calling_convention {
                     CallingConvention::AppleAarch64 => {
-                        caller_stack_offset += match sz {
-                            Size::S8 => 1,
-                            Size::S16 => 2,
-                            Size::S32 => 4,
-                            Size::S64 => 8,
-                        };
+                        caller_stack_offset += 1
+                            << match sz {
+                                Size::S8 => 0,
+                                Size::S16 => 1,
+                                Size::S32 => 2,
+                                Size::S64 => 3,
+                            };
                     }
                     _ => {
                         caller_stack_offset += 8;
@@ -3198,8 +3321,10 @@ pub fn gen_std_trampoline_arm64(
         ; ret
     );
 
+    let mut body = a.finalize().unwrap();
+    body.shrink_to_fit();
     Ok(FunctionBody {
-        body: a.finalize().unwrap().to_vec(),
+        body,
         unwind_info: None,
     })
 }
@@ -3208,7 +3333,7 @@ pub fn gen_std_dynamic_import_trampoline_arm64(
     vmoffsets: &VMOffsets,
     sig: &FunctionType,
     calling_convention: CallingConvention,
-) -> Result<FunctionBody, CodegenError> {
+) -> Result<FunctionBody, CompileError> {
     let mut a = Assembler::new(0);
     // Allocate argument array.
     let stack_offset: usize = 16 * std::cmp::max(sig.params().len(), sig.results().len());
@@ -3353,8 +3478,10 @@ pub fn gen_std_dynamic_import_trampoline_arm64(
     // Return.
     a.emit_ret()?;
 
+    let mut body = a.finalize().unwrap();
+    body.shrink_to_fit();
     Ok(FunctionBody {
-        body: a.finalize().unwrap().to_vec(),
+        body,
         unwind_info: None,
     })
 }
@@ -3364,7 +3491,7 @@ pub fn gen_import_call_trampoline_arm64(
     index: FunctionIndex,
     sig: &FunctionType,
     calling_convention: CallingConvention,
-) -> Result<CustomSection, CodegenError> {
+) -> Result<CustomSection, CompileError> {
     let mut a = Assembler::new(0);
 
     // Singlepass internally treats all arguments as integers
@@ -3532,7 +3659,9 @@ pub fn gen_import_call_trampoline_arm64(
     }
     a.emit_b_register(GPR::X16)?;
 
-    let section_body = SectionBody::new_with_vec(a.finalize().unwrap().to_vec());
+    let mut contents = a.finalize().unwrap();
+    contents.shrink_to_fit();
+    let section_body = SectionBody::new_with_vec(contents);
 
     Ok(CustomSection {
         protection: CustomSectionProtection::ReadExecute,
