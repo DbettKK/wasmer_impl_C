@@ -104,7 +104,7 @@ impl Wasi {
             is_wasix_module(module),
             std::sync::atomic::Ordering::Release,
         );
-        let mut mut import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
+        let mut import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
         wasi_import_shared_memory(&mut import_object, module, store);
 
         import_object.define("env", "my_lre_exec_backtrack", Function::new_typed(store, wrap_lre_exec_backtrack));
