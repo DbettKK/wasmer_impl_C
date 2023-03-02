@@ -108,6 +108,7 @@ impl Wasi {
         wasi_import_shared_memory(&mut import_object, module, store);
 
         import_object.define("env", "my_lre_exec_backtrack", Function::new_typed(store, wrap_lre_exec_backtrack));
+        import_object.define("env", "my_copy_two_string", Function::new_typed(store, wrap_my_copy_two_string));
 
         let instance = Instance::new(store, module, &import_object)?;
         let memory = instance.exports.get_memory("memory")?;
@@ -160,6 +161,18 @@ extern "C" {
         cptr_wasm: i32,
         no_recurse: i32,
     ) -> i32;
+    fn my_copy_two_string(
+        dst_str8_wasm: i32,
+        dst_str16_wasm: i32,
+        p1_str8_wasm: i32,
+        p1_str16_wasm: i32,
+        p1_len: i32,
+        p1_wide: i32,
+        p2_str8_wasm: i32,
+        p2_str16_wasm: i32,
+        p2_len: i32,
+        p2_wide: i32,
+    );
 }
 
 fn wrap_lre_exec_backtrack(
@@ -177,5 +190,22 @@ fn wrap_lre_exec_backtrack(
         //let start = Instant::now();
         lre_exec_backtrack(mf, state, s, capture_wasm, stack_wasm, stack_len, pc_wasm, cptr_wasm, no_recurse)
         //println!("{:?}", start.elapsed().as_nanos());
+    }
+}
+
+fn wrap_my_copy_two_string(
+    dst_str8_wasm: i32,
+    dst_str16_wasm: i32,
+    p1_str8_wasm: i32,
+    p1_str16_wasm: i32,
+    p1_len: i32,
+    p1_wide: i32,
+    p2_str8_wasm: i32,
+    p2_str16_wasm: i32,
+    p2_len: i32,
+    p2_wide: i32,
+) {
+    unsafe {
+        my_copy_two_string(dst_str8_wasm, dst_str16_wasm, p1_str8_wasm, p1_str16_wasm, p1_len, p1_wide, p2_str8_wasm, p2_str16_wasm, p2_len, p2_wide)
     }
 }
