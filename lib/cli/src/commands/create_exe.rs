@@ -1,6 +1,8 @@
 //! Create a standalone native executable for a given Wasm file.
 
-use super::ObjectFormat;
+use self::utils::normalize_atom_name;
+
+use crate::common::normalize_path;
 use crate::store::CompilerOptions;
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -10,10 +12,11 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
+use tar::Archive;
 use wasmer::*;
 use wasmer_object::{emit_serialized, get_object_for_target};
 use wasmer_types::compilation::symbols::ModuleMetadataSymbolRegistry;
-use wasmer_types::{ModuleInfo, SymbolRegistry};
+use wasmer_types::ModuleInfo;
 use webc::{ParseOptions, WebCMmap};
 
 const LINK_SYSTEM_LIBRARIES_WINDOWS: &[&str] = &["userenv", "Ws2_32", "advapi32", "bcrypt"];
@@ -70,14 +73,6 @@ pub struct CreateExe {
     /// this flag can be used to override that behaviour.
     #[clap(long, name = "URL_OR_RELEASE_VERSION")]
     use_wasmer_release: Option<String>,
-
-    /// Object format options
-    ///
-    /// This flag accepts two options: `symbols` or `serialized`.
-    /// - (default) `symbols` creates an object where all functions and metadata of the module are regular object symbols
-    /// - `serialized` creates an object where the module is zero-copy serialized as raw data
-    #[clap(long = "object-format", name = "OBJECT_FORMAT", verbatim_doc_comment)]
-    object_format: Option<ObjectFormat>,
 
     #[clap(long, short = 'm', multiple = true, number_of_values = 1)]
     cpu_features: Vec<CpuFeature>,
@@ -160,8 +155,6 @@ pub struct Entrypoint {
     pub atoms: Vec<CommandEntrypoint>,
     /// Volume objects (if any) to link into the final binary
     pub volumes: Vec<Volume>,
-    /// Type of the object format the atoms were compiled with
-    pub object_format: ObjectFormat,
 }
 
 /// Command entrypoint for multiple commands
@@ -199,7 +192,6 @@ impl CreateExe {
         let starting_cd = env::current_dir()?;
         let input_path = starting_cd.join(&path);
         let output_path = starting_cd.join(&self.output);
-        let object_format = self.object_format.unwrap_or_default();
 
         let url_or_version = match self
             .use_wasmer_release
@@ -211,26 +203,22 @@ impl CreateExe {
             None => None,
         };
 
-        let cross_compilation = utils::get_cross_compile_setup(
-            &mut cc,
-            &target_triple,
-            &starting_cd,
-            &object_format,
-            url_or_version,
-        )?;
+        let cross_compilation =
+            utils::get_cross_compile_setup(&mut cc, &target_triple, &starting_cd, url_or_version)?;
 
         if input_path.is_dir() {
             return Err(anyhow::anyhow!("input path cannot be a directory"));
         }
 
         let (_, compiler_type) = self.compiler.get_store_for_target(target.clone())?;
+
         println!("Compiler: {}", compiler_type.to_string());
         println!("Target: {}", target.triple());
-        println!("Format: {:?}", object_format);
         println!(
             "Using path `{}` as libwasmer path.",
             cross_compilation.library.display()
         );
+
         if !cross_compilation.library.exists() {
             return Err(anyhow::anyhow!("library path does not exist"));
         }
@@ -251,7 +239,6 @@ impl CreateExe {
                     &self.compiler,
                     &self.cpu_features,
                     &cross_compilation.target,
-                    object_format,
                     &self.precompiled_atom,
                     AllowMultiWasm::Allow,
                     self.debug_dir.is_some(),
@@ -264,13 +251,12 @@ impl CreateExe {
                     &self.compiler,
                     &cross_compilation.target,
                     &self.cpu_features,
-                    object_format,
                     &self.precompiled_atom,
                     self.debug_dir.is_some(),
                 )
             }?;
 
-        get_module_infos(&tempdir, &atoms, object_format)?;
+        get_module_infos(&tempdir, &atoms)?;
         let mut entrypoint = get_entrypoint(&tempdir)?;
         create_header_files_in_dir(&tempdir, &mut entrypoint, &atoms, &self.precompiled_atom)?;
         link_exe_from_dir(
@@ -354,7 +340,6 @@ pub(super) fn compile_pirita_into_directory(
     compiler: &CompilerOptions,
     cpu_features: &[CpuFeature],
     triple: &Triple,
-    object_format: ObjectFormat,
     prefixes: &[String],
     allow_multi_wasm: AllowMultiWasm,
     debug: bool,
@@ -427,21 +412,20 @@ pub(super) fn compile_pirita_into_directory(
         let atom_path = target_dir
             .join("atoms")
             .join(format!("{}.o", utils::normalize_atom_name(&atom_name)));
-        let header_path = match object_format {
-            ObjectFormat::Symbols => {
-                std::fs::create_dir_all(target_dir.join("include")).map_err(|e| {
-                    anyhow::anyhow!(
-                        "cannot create /include dir in {}: {e}",
-                        target_dir.display()
-                    )
-                })?;
+        let header_path = {
+            std::fs::create_dir_all(target_dir.join("include")).map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot create /include dir in {}: {e}",
+                    target_dir.display()
+                )
+            })?;
 
-                Some(target_dir.join("include").join(format!(
-                    "static_defs_{}.h",
-                    utils::normalize_atom_name(&atom_name)
-                )))
-            }
-            ObjectFormat::Serialized => None,
+            let header_path = target_dir.join("include").join(format!(
+                "static_defs_{}.h",
+                utils::normalize_atom_name(&atom_name)
+            ));
+
+            Some(header_path)
         };
         target_paths.push((
             atom_name.clone(),
@@ -459,7 +443,6 @@ pub(super) fn compile_pirita_into_directory(
         &target_dir.join("atoms"),
         compiler,
         target,
-        object_format,
         &prefix_map,
         debug,
     )?;
@@ -490,7 +473,6 @@ pub(super) fn compile_pirita_into_directory(
             name: volume_name.to_string(),
             obj_file: volume_path,
         }],
-        object_format,
     };
 
     write_entrypoint(&target_dir, &entrypoint)?;
@@ -528,7 +510,7 @@ impl PrefixMapCompilation {
             return Ok(Self {
                 input_hashes: atoms
                     .iter()
-                    .map(|(name, bytes)| (name.clone(), Self::hash_for_bytes(bytes)))
+                    .map(|(name, bytes)| (normalize_atom_name(name), Self::hash_for_bytes(bytes)))
                     .collect(),
                 manual_prefixes: BTreeMap::new(),
                 compilation_objects: BTreeMap::new(),
@@ -537,10 +519,10 @@ impl PrefixMapCompilation {
 
         // if prefixes are specified, have to match the atom names exactly
         if prefixes.len() != atoms.len() {
-            return Err(anyhow::anyhow!(
-                "invalid mapping of prefix and atoms: expected prefixes for {} atoms, got {} prefixes", 
+            println!(
+                "WARNING: invalid mapping of prefix and atoms: expected prefixes for {} atoms, got {} prefixes", 
                 atoms.len(), prefixes.len()
-            ));
+            );
         }
 
         let available_atoms = atoms.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>();
@@ -557,11 +539,11 @@ impl PrefixMapCompilation {
                 [atom, prefix, path] => {
                     if only_validate_prefixes {
                         // only insert the prefix in order to not error out of the fs::read(path)
-                        manual_prefixes.insert(atom.to_string(), prefix.to_string());
+                        manual_prefixes.insert(normalize_atom_name(atom), prefix.to_string());
                     } else {
                         let atom_hash = atoms
                         .iter()
-                        .find_map(|(name, _)| if name.as_str() == atom.as_str() { Some(prefix.to_string()) } else { None })
+                        .find_map(|(name, _)| if normalize_atom_name(name) == normalize_atom_name(atom) { Some(prefix.to_string()) } else { None })
                         .ok_or_else(|| anyhow::anyhow!("no atom {atom:?} found, for prefix {p:?}, available atoms are {available_atoms:?}"))?;
 
                         let current_dir = std::env::current_dir().unwrap().canonicalize().unwrap();
@@ -570,17 +552,17 @@ impl PrefixMapCompilation {
                             anyhow::anyhow!("could not read file for atom {atom:?} (prefix {p}, path {} in dir {}): {e}", path.display(), current_dir.display())
                         })?;
 
-                        compilation_objects.insert(atom.to_string(), bytes);
-                        manual_prefixes.insert(atom.to_string(), atom_hash.to_string());
+                        compilation_objects.insert(normalize_atom_name(atom), bytes);
+                        manual_prefixes.insert(normalize_atom_name(atom), atom_hash.to_string());
                     }
                 }
                 // atom + path, but default SHA256 prefix
                 [atom, path] => {
                     let atom_hash = atoms
                     .iter()
-                    .find_map(|(name, bytes)| if name.as_str() == atom.as_str() { Some(Self::hash_for_bytes(bytes)) } else { None })
+                    .find_map(|(name, bytes)| if normalize_atom_name(name) == normalize_atom_name(atom) { Some(Self::hash_for_bytes(bytes)) } else { None })
                     .ok_or_else(|| anyhow::anyhow!("no atom {atom:?} found, for prefix {p:?}, available atoms are {available_atoms:?}"))?;
-                    manual_prefixes.insert(atom.to_string(), atom_hash.to_string());
+                    manual_prefixes.insert(normalize_atom_name(atom), atom_hash.to_string());
 
                     if !only_validate_prefixes {
                         let current_dir = std::env::current_dir().unwrap().canonicalize().unwrap();
@@ -588,12 +570,12 @@ impl PrefixMapCompilation {
                         let bytes = std::fs::read(&path).map_err(|e| {
                             anyhow::anyhow!("could not read file for atom {atom:?} (prefix {p}, path {} in dir {}): {e}", path.display(), current_dir.display())
                         })?;
-                        compilation_objects.insert(atom.to_string(), bytes);
+                        compilation_objects.insert(normalize_atom_name(atom), bytes);
                     }
                 }
                 // only prefix if atoms.len() == 1
                 [prefix] if atoms.len() == 1 => {
-                    manual_prefixes.insert(atoms[0].0.clone(), prefix.to_string());
+                    manual_prefixes.insert(normalize_atom_name(&atoms[0].0), prefix.to_string());
                 }
                 _ => {
                     return Err(anyhow::anyhow!("invalid --precompiled-atom {p:?} - correct format is ATOM:PREFIX:PATH or ATOM:PATH"));
@@ -721,7 +703,6 @@ fn compile_atoms(
     output_dir: &Path,
     compiler: &CompilerOptions,
     target: &Target,
-    object_format: ObjectFormat,
     prefixes: &PrefixMapCompilation,
     debug: bool,
 ) -> Result<BTreeMap<String, ModuleInfo>, anyhow::Error> {
@@ -732,7 +713,7 @@ fn compile_atoms(
     let mut module_infos = BTreeMap::new();
     for (a, data) in atoms {
         let prefix = prefixes
-            .get_prefix_for_atom(a)
+            .get_prefix_for_atom(&normalize_atom_name(a))
             .ok_or_else(|| anyhow::anyhow!("no prefix given for atom {a}"))?;
         let atom_name = utils::normalize_atom_name(a);
         let output_object_path = output_dir.join(format!("{atom_name}.o"));
@@ -745,44 +726,25 @@ fn compile_atoms(
             continue;
         }
         let (store, _) = compiler.get_store_for_target(target.clone())?;
-        match object_format {
-            ObjectFormat::Symbols => {
-                let engine = store.engine();
-                let engine_inner = engine.inner();
-                let compiler = engine_inner.compiler()?;
-                let features = engine_inner.features();
-                let tunables = store.tunables();
-                let (module_info, obj, _, _) = Artifact::generate_object(
-                    compiler,
-                    data,
-                    Some(prefix.as_str()),
-                    target,
-                    tunables,
-                    features,
-                )?;
-                module_infos.insert(atom_name, module_info);
-                // Write object file with functions
-                let mut writer = BufWriter::new(File::create(&output_object_path)?);
-                obj.write_stream(&mut writer)
-                    .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-                writer.flush()?;
-            }
-            ObjectFormat::Serialized => {
-                let module_name = ModuleMetadataSymbolRegistry {
-                    prefix: prefix.clone(),
-                }
-                .symbol_to_name(wasmer_types::Symbol::Metadata);
-                let module = Module::from_binary(&store, data).context("failed to compile Wasm")?;
-                let bytes = module.serialize()?;
-                let mut obj = get_object_for_target(target.triple())?;
-                emit_serialized(&mut obj, &bytes, target.triple(), &module_name)?;
-
-                let mut writer = BufWriter::new(File::create(&output_object_path)?);
-                obj.write_stream(&mut writer)
-                    .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-                writer.flush()?;
-            }
-        }
+        let engine = store.engine();
+        let engine_inner = engine.inner();
+        let compiler = engine_inner.compiler()?;
+        let features = engine_inner.features();
+        let tunables = store.tunables();
+        let (module_info, obj, _, _) = Artifact::generate_object(
+            compiler,
+            data,
+            Some(prefix.as_str()),
+            target,
+            tunables,
+            features,
+        )?;
+        module_infos.insert(atom_name, module_info);
+        // Write object file with functions
+        let mut writer = BufWriter::new(File::create(&output_object_path)?);
+        obj.write_stream(&mut writer)
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        writer.flush()?;
     }
 
     Ok(module_infos)
@@ -884,7 +846,6 @@ pub(super) fn prepare_directory_from_single_wasm_file(
     compiler: &CompilerOptions,
     triple: &Triple,
     cpu_features: &[CpuFeature],
-    object_format: ObjectFormat,
     prefix: &[String],
     debug: bool,
 ) -> anyhow::Result<Vec<(String, Vec<u8>)>, anyhow::Error> {
@@ -926,7 +887,6 @@ pub(super) fn prepare_directory_from_single_wasm_file(
         &target_dir.join("atoms"),
         compiler,
         target,
-        object_format,
         &prefix_map,
         debug,
     )?;
@@ -946,7 +906,6 @@ pub(super) fn prepare_directory_from_single_wasm_file(
     let entrypoint = Entrypoint {
         atoms,
         volumes: Vec::new(),
-        object_format,
     };
 
     write_entrypoint(&target_dir, &entrypoint)?;
@@ -960,27 +919,24 @@ pub(super) fn prepare_directory_from_single_wasm_file(
 fn get_module_infos(
     directory: &Path,
     atoms: &[(String, Vec<u8>)],
-    object_format: ObjectFormat,
 ) -> Result<BTreeMap<String, ModuleInfo>, anyhow::Error> {
     let mut entrypoint =
         get_entrypoint(directory).with_context(|| anyhow::anyhow!("get module infos"))?;
 
     let mut module_infos = BTreeMap::new();
     for (atom_name, atom_bytes) in atoms {
-        let store = Store::default();
-        let module = Module::from_binary(&store, atom_bytes.as_slice())
-            .map_err(|e| anyhow::anyhow!("could not deserialize module {atom_name}: {e}"))?;
+        let module_info = Engine::get_module_info(atom_bytes.as_slice())
+            .map_err(|e| anyhow::anyhow!("could not get module info for atom {atom_name}: {e}"))?;
+
         if let Some(s) = entrypoint
             .atoms
             .iter_mut()
             .find(|a| a.atom.as_str() == atom_name.as_str())
         {
-            s.module_info = Some(module.info().clone());
-            module_infos.insert(atom_name.clone(), module.info().clone());
+            s.module_info = Some(module_info.clone());
+            module_infos.insert(atom_name.clone(), module_info.clone());
         }
     }
-
-    entrypoint.object_format = object_format;
 
     write_entrypoint(directory, &entrypoint)?;
 
@@ -995,11 +951,6 @@ pub(crate) fn create_header_files_in_dir(
     prefixes: &[String],
 ) -> anyhow::Result<()> {
     use object::{Object, ObjectSection};
-
-    if entrypoint.object_format == ObjectFormat::Serialized {
-        write_entrypoint(directory, entrypoint)?;
-        return Ok(());
-    }
 
     std::fs::create_dir_all(directory.join("include")).map_err(|e| {
         anyhow::anyhow!("cannot create /include dir in {}: {e}", directory.display())
@@ -1135,8 +1086,7 @@ fn link_exe_from_dir(
     // to libunwind and libstdc++ not compiling, so we fake this special case of cross-compilation
     // by falling back to the system compilation + system linker
     if cross_compilation.target == Triple::host()
-        && (entrypoint.object_format == ObjectFormat::Serialized
-            || cross_compilation.target.operating_system == OperatingSystem::Windows)
+        && cross_compilation.target.operating_system == OperatingSystem::Windows
     {
         run_c_compile(
             &directory.join("wasmer_main.c"),
@@ -1151,12 +1101,6 @@ fn link_exe_from_dir(
                 directory.display()
             )
         })?;
-    } else if entrypoint.object_format == ObjectFormat::Serialized
-        && cross_compilation.target != Triple::host()
-    {
-        return Err(anyhow::anyhow!(
-            "ObjectFormat::Serialized + cross compilation not implemented"
-        ));
     }
 
     // compilation done, now link
@@ -1222,6 +1166,10 @@ fn link_exe_from_dir(
     include_path.pop();
     include_path.pop();
     include_path.push("include");
+    if !include_path.exists() {
+        // Can happen when we got the wrong library_path
+        return Err(anyhow::anyhow!("Wasmer include path {} does not exist, maybe library path {} is wrong (expected /lib/libwasmer.a)?", include_path.display(), library_path.display()));
+    }
     cmd.arg("-I");
     cmd.arg(normalize_path(&format!("{}", include_path.display())));
 
@@ -1253,10 +1201,7 @@ fn link_exe_from_dir(
     cmd.arg(normalize_path(&format!(
         "{}",
         directory
-            .join(match entrypoint.object_format {
-                ObjectFormat::Serialized => "wasmer_main.o",
-                ObjectFormat::Symbols => "wasmer_main.c",
-            })
+            .join("wasmer_main.c")
             .canonicalize()
             .expect("could not find wasmer_main.c / wasmer_main.o")
             .display()
@@ -1279,19 +1224,31 @@ fn link_exe_from_dir(
         cmd.args(files_winsdk);
     }
 
-    println!("running cmd: {cmd:?}");
+    if zig_triple.contains("macos") {
+        // need to link with Security framework when using zig, but zig
+        // doesn't include it, so we need to bring a copy of the dtb file
+        // which is basicaly the collection of exported symbol for the libs
+        let framework = include_bytes!("security_framework.tgz").to_vec();
+        // extract files
+        let tar = flate2::read::GzDecoder::new(framework.as_slice());
+        let mut archive = Archive::new(tar);
+        // directory is a temp folder
+        archive.unpack(directory)?;
+        // add the framework to the link command
+        cmd.arg("-framework");
+        cmd.arg("Security");
+        cmd.arg(format!("-F{}", directory.display()));
+    }
+
+    if debug {
+        println!("running cmd: {cmd:?}");
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+    }
 
     let compilation = cmd
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
         .output()
         .context(anyhow!("Could not execute `zig`: {cmd:?}"))?;
-
-    println!(
-        "file {} exists: {:?}",
-        out_path.display(),
-        out_path.exists()
-    );
 
     if !compilation.status.success() {
         return Err(anyhow::anyhow!(String::from_utf8_lossy(
@@ -1302,7 +1259,6 @@ fn link_exe_from_dir(
 
     // remove file if it exists - if not done, can lead to errors on copy
     let output_path_normalized = normalize_path(&format!("{}", output_path.display()));
-    println!("removing {output_path_normalized}");
     let _ = std::fs::remove_file(&output_path_normalized);
     std::fs::copy(
         &normalize_path(&format!("{}", out_path.display())),
@@ -1317,10 +1273,6 @@ fn link_exe_from_dir(
     })?;
 
     Ok(())
-}
-
-pub(crate) fn normalize_path(s: &str) -> String {
-    s.strip_prefix(r"\\?\").unwrap_or(s).to_string()
 }
 
 /// Link compiled objects using the system linker
@@ -1386,8 +1338,6 @@ fn generate_wasmer_main_c(
 
     const WASMER_MAIN_C_SOURCE: &str = include_str!("wasmer_create_exe_main.c");
 
-    let compile_static = entrypoint.object_format == ObjectFormat::Symbols;
-
     // always with compile zig + static_defs.h
     let atom_names = entrypoint
         .atoms
@@ -1395,7 +1345,7 @@ fn generate_wasmer_main_c(
         .map(|a| &a.command)
         .collect::<Vec<_>>();
 
-    let mut c_code_to_add = String::new();
+    let c_code_to_add = String::new();
     let mut c_code_to_instantiate = String::new();
     let mut deallocate_module = String::new();
     let mut extra_headers = Vec::new();
@@ -1411,44 +1361,16 @@ fn generate_wasmer_main_c(
             })?;
         let atom_name = prefix.clone();
 
-        let module_name = ModuleMetadataSymbolRegistry {
-            prefix: prefix.clone(),
-        }
-        .symbol_to_name(wasmer_types::Symbol::Metadata);
+        extra_headers.push(format!("#include \"static_defs_{atom_name}.h\""));
 
-        if compile_static {
-            extra_headers.push(format!("#include \"static_defs_{atom_name}.h\""));
-
-            write!(c_code_to_instantiate, "
-            wasm_module_t *atom_{atom_name} = wasmer_object_module_new_{atom_name}(store, \"{atom_name}\");
-            if (!atom_{atom_name}) {{
-                fprintf(stderr, \"Failed to create module from atom \\\"{a}\\\"\\n\");
-                print_wasmer_error();
-                return -1;
-            }}
-            ")?;
-        } else {
-            write!(
-                c_code_to_add,
-                "
-                extern size_t {module_name}_LENGTH asm(\"{module_name}_LENGTH\");
-                extern char {module_name}_DATA asm(\"{module_name}_DATA\");
-                "
-            )?;
-
-            write!(c_code_to_instantiate, "
-            wasm_byte_vec_t atom_{atom_name}_byte_vec = {{
-                .size = {module_name}_LENGTH,
-                .data = &{module_name}_DATA,
-            }};
-            wasm_module_t *atom_{atom_name} = wasm_module_deserialize(store, &atom_{atom_name}_byte_vec);
-            if (!atom_{atom_name}) {{
-                fprintf(stderr, \"Failed to create module from atom \\\"{atom_name}\\\"\\n\");
-                print_wasmer_error();
-                return -1;
-            }}
-            ")?;
-        }
+        write!(c_code_to_instantiate, "
+        wasm_module_t *atom_{atom_name} = wasmer_object_module_new_{atom_name}(store, \"{atom_name}\");
+        if (!atom_{atom_name}) {{
+            fprintf(stderr, \"Failed to create module from atom \\\"{a}\\\"\\n\");
+            print_wasmer_error();
+            return -1;
+        }}
+        ")?;
 
         write!(deallocate_module, "wasm_module_delete(atom_{atom_name});")?;
     }
@@ -1539,7 +1461,7 @@ fn generate_wasmer_main_c(
 #[allow(dead_code)]
 pub(super) mod utils {
 
-    use super::{CrossCompile, CrossCompileSetup, ObjectFormat, UrlOrVersion};
+    use super::{CrossCompile, CrossCompileSetup, UrlOrVersion};
     use anyhow::Context;
     use std::{
         ffi::OsStr,
@@ -1565,14 +1487,9 @@ pub(super) mod utils {
         cross_subc: &mut CrossCompile,
         target_triple: &Triple,
         starting_cd: &Path,
-        object_format: &ObjectFormat,
         specific_release: Option<UrlOrVersion>,
     ) -> Result<CrossCompileSetup, anyhow::Error> {
         let target = target_triple;
-
-        if *object_format == ObjectFormat::Serialized && *target_triple != Triple::host() {
-            return Err(anyhow::anyhow!("cannot cross-compile: --object-format serialized + cross-compilation is not supported"));
-        }
 
         if let Some(tarball_path) = cross_subc.tarball.as_mut() {
             if tarball_path.is_relative() {
@@ -1759,11 +1676,17 @@ pub(super) mod utils {
         target: &Triple,
         files: &[PathBuf],
     ) -> Result<PathBuf, anyhow::Error> {
-        let a = OsStr::new("libwasmer.a");
-        let b = OsStr::new("wasmer.lib");
-        files
+        let target_files = &[
+            OsStr::new("libwasmer-headless.a"),
+            OsStr::new("wasmer-headless.lib"),
+            OsStr::new("libwasmer.a"),
+            OsStr::new("wasmer.lib"),
+        ];
+        target_files
         .iter()
-        .find(|f| f.file_name() == Some(a) || f.file_name() == Some(b))
+        .find_map(|q| {
+            files.iter().find(|f| f.file_name() == Some(*q))
+        })
         .cloned()
         .ok_or_else(|| {
             anyhow!("Could not find libwasmer.a for {} target in the provided tarball path (files = {files:#?})", target)
@@ -1853,7 +1776,7 @@ pub(super) mod utils {
     pub(super) fn get_libwasmer_cache_path() -> anyhow::Result<PathBuf> {
         let mut path = get_wasmer_dir()?;
         path.push("cache");
-        let _ = std::fs::create_dir(&path);
+        std::fs::create_dir_all(&path)?;
         Ok(path)
     }
 
@@ -1950,7 +1873,7 @@ pub(super) mod utils {
             "/test/wasmer-windows.exe",
         ];
 
-        let paths = test_paths.iter().map(|p| Path::new(p)).collect::<Vec<_>>();
+        let paths = test_paths.iter().map(Path::new).collect::<Vec<_>>();
         assert_eq!(
             paths
                 .iter()
@@ -1962,7 +1885,7 @@ pub(super) mod utils {
             vec![&Path::new("/test/wasmer-windows-gnu64.tar.gz")],
         );
 
-        let paths = test_paths.iter().map(|p| Path::new(p)).collect::<Vec<_>>();
+        let paths = test_paths.iter().map(Path::new).collect::<Vec<_>>();
         assert_eq!(
             paths
                 .iter()
@@ -1974,7 +1897,7 @@ pub(super) mod utils {
             vec![&Path::new("/test/wasmer-windows-gnu64.tar.gz")],
         );
 
-        let paths = test_paths.iter().map(|p| Path::new(p)).collect::<Vec<_>>();
+        let paths = test_paths.iter().map(Path::new).collect::<Vec<_>>();
         assert_eq!(
             paths
                 .iter()

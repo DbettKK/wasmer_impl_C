@@ -45,7 +45,7 @@ struct RuntimeErrorInner {
     /// The reconstructed Wasm trace (from the native trace and the `GlobalFrameInfo`).
     wasm_trace: Vec<FrameInfo>,
     /// The native backtrace
-    native_trace: Backtrace,
+    native_trace: Option<Backtrace>,
 }
 
 fn _assert_trap_is_sync_and_send(t: &Trap) -> (&dyn Sync, &dyn Send) {
@@ -191,7 +191,7 @@ impl RuntimeError {
             inner: Arc::new(RuntimeErrorInner {
                 source,
                 wasm_trace,
-                native_trace,
+                native_trace: Some(native_trace),
             }),
         }
     }
@@ -219,6 +219,18 @@ impl RuntimeError {
                 inner: Arc::new(inner),
             }),
             Err(inner) => Err(Self { inner }),
+        }
+    }
+
+    /// Attempts to downcast the `RuntimeError` to a concrete type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        match self.inner.as_ref() {
+            // We only try to downcast user errors
+            RuntimeErrorInner {
+                source: RuntimeErrorSource::User(err),
+                ..
+            } if err.is::<T>() => err.downcast_ref::<T>(),
+            _ => None,
         }
     }
 

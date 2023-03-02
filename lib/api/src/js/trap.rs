@@ -2,9 +2,7 @@
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
-use wasm_bindgen::convert::FromWasmAbi;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{prelude::*, JsValue};
 use wasm_bindgen_downcast::DowncastJS;
 
 pub trait CoreError: fmt::Debug + fmt::Display {
@@ -31,6 +29,7 @@ impl<T: fmt::Debug + fmt::Display> CoreError for T {}
 
 impl dyn CoreError + 'static {
     /// Returns `true` if the inner type is the same as `T`.
+    #[allow(dead_code)]
     pub fn core_is_equal<T: CoreError + 'static>(&self) -> bool {
         let t = core::any::TypeId::of::<T>();
         let concrete = self.type_id();
@@ -40,6 +39,7 @@ impl dyn CoreError + 'static {
 
 impl dyn CoreError + Send + Sync + 'static {
     /// Returns `true` if the inner type is the same as `T`.
+    #[allow(dead_code)]
     pub fn core_is_equal<T: CoreError + 'static>(&self) -> bool {
         let t = core::any::TypeId::of::<T>();
         let concrete = self.type_id();
@@ -50,6 +50,7 @@ impl dyn CoreError + Send + Sync + 'static {
 impl dyn CoreError + Send {
     #[inline]
     /// Attempts to downcast the box to a concrete type.
+    #[allow(dead_code)]
     pub fn downcast_core<T: CoreError + 'static>(
         self: Box<Self>,
     ) -> Result<Box<T>, Box<dyn CoreError + Send>> {
@@ -64,6 +65,7 @@ impl dyn CoreError + Send {
 impl dyn CoreError + Send + Sync {
     #[inline]
     /// Attempts to downcast the box to a concrete type.
+    #[allow(dead_code)]
     pub fn downcast_core<T: CoreError + 'static>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
         let err: Box<dyn CoreError> = self;
         <dyn CoreError>::downcast_core(err).map_err(|s| unsafe {
@@ -76,6 +78,7 @@ impl dyn CoreError + Send + Sync {
 impl dyn CoreError {
     #[inline]
     /// Attempts to downcast the box to a concrete type.
+    #[allow(dead_code)]
     pub fn downcast_core<T: CoreError + 'static>(
         self: Box<Self>,
     ) -> Result<Box<T>, Box<dyn CoreError>> {
@@ -212,6 +215,16 @@ impl RuntimeError {
                 inner: Arc::new(inner),
             }),
             Err(inner) => Err(Self { inner }),
+        }
+    }
+
+    /// Attempts to downcast the `RuntimeError` to a concrete type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        match self.inner.as_ref() {
+            // We only try to downcast user errors
+            #[cfg(feature = "std")]
+            RuntimeErrorSource::User(err) => err.downcast_ref::<T>(),
+            _ => None,
         }
     }
 

@@ -311,6 +311,17 @@ impl<'a, T: ValueType> WasmSlice<'a, T> {
         self.buffer.write(self.offset, bytes)
     }
 
+    /// Reads this `WasmSlice` into a `slice`.
+    #[inline]
+    pub fn read_to_slice<'b>(
+        self,
+        buf: &'b mut [MaybeUninit<u8>],
+    ) -> Result<usize, MemoryAccessError> {
+        let len = self.len.try_into().expect("WasmSlice length overflow");
+        self.buffer.read_uninit(self.offset, buf)?;
+        Ok(len)
+    }
+
     /// Reads this `WasmSlice` into a `Vec`.
     #[inline]
     pub fn read_to_vec(self) -> Result<Vec<T>, MemoryAccessError> {
@@ -327,6 +338,24 @@ impl<'a, T: ValueType> WasmSlice<'a, T> {
             vec.set_len(len);
         }
         Ok(vec)
+    }
+
+    /// Reads this `WasmSlice` into a `BytesMut`
+    #[inline]
+    pub fn read_to_bytes(self) -> Result<bytes::BytesMut, MemoryAccessError> {
+        let len = self.len.try_into().expect("WasmSlice length overflow");
+        let mut ret = bytes::BytesMut::with_capacity(len);
+        let bytes = unsafe {
+            slice::from_raw_parts_mut(
+                ret.as_mut_ptr() as *mut MaybeUninit<u8>,
+                len * mem::size_of::<T>(),
+            )
+        };
+        self.buffer.read_uninit(self.offset, bytes)?;
+        unsafe {
+            ret.set_len(len);
+        }
+        Ok(ret)
     }
 }
 

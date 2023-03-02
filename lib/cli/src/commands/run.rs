@@ -1,3 +1,4 @@
+#[cfg(feature = "cache")]
 use crate::common::get_cache_dir;
 #[cfg(feature = "debug")]
 use crate::logging;
@@ -7,11 +8,15 @@ use crate::suggestions::suggest_function_exports;
 use crate::warning;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use std::fs::File;
+use std::io::Write;
 use libc::c_void;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::PathBuf;
+#[cfg(feature = "cache")]
 use std::str::FromStr;
+#[cfg(feature = "emscripten")]
 use wasmer::FunctionEnv;
 use wasmer::*;
 #[cfg(feature = "cache")]
@@ -88,6 +93,10 @@ pub struct RunWithoutFile {
     #[clap(long = "verbose")]
     pub(crate) verbose: Option<u8>,
 
+    /// Enable coredump generation after a WebAssembly trap.
+    #[clap(name = "COREDUMP PATH", long = "coredump-on-trap", parse(from_os_str))]
+    coredump_on_trap: Option<PathBuf>,
+
     /// Application arguments
     #[clap(value_name = "ARGS")]
     pub(crate) args: Vec<String>,
@@ -122,7 +131,12 @@ impl RunWithPathBuf {
 
             #[cfg(feature = "wasi")]
             {
-                let default = HashMap::default();
+                // See https://github.com/wasmerio/wasmer/issues/3492 -
+                // we need IndexMap to have a stable ordering for the [fs] mapping,
+                // otherwise overlapping filesystem mappings might not work
+                // since we want to control the order of mounting directories from the
+                // wasmer.toml file
+                let default = indexmap::IndexMap::default();
                 let fs = manifest.fs.as_ref().unwrap_or(&default);
                 for (alias, real_dir) in fs.iter() {
                     let real_dir = self_clone.path.join(&real_dir);
@@ -148,7 +162,7 @@ impl RunWithPathBuf {
         if self.debug {
             logging::set_up_logging(self_clone.verbose.unwrap_or(0)).unwrap();
         }
-        self_clone.inner_execute().with_context(|| {
+        let invoke_res = self_clone.inner_execute().with_context(|| {
             format!(
                 "failed to run `{}`{}",
                 self_clone.path.display(),
@@ -158,20 +172,36 @@ impl RunWithPathBuf {
                     ""
                 }
             )
-        })
+        });
+
+        if let Err(err) = invoke_res {
+            if let Some(coredump_path) = self.coredump_on_trap.as_ref() {
+                let source_name = self.path.to_str().unwrap_or("unknown");
+                if let Err(coredump_err) = generate_coredump(&err, source_name, coredump_path) {
+                    eprintln!("warning: coredump failed to generate: {}", coredump_err);
+                    Err(err)
+                } else {
+                    Err(err.context(format!("core dumped at {}", coredump_path.display())))
+                }
+            } else {
+                Err(err)
+            }
+        } else {
+            invoke_res
+        }
     }
 
-    fn inner_module_run(&self, mut store: Store, instance: Instance) -> Result<()> {
+    fn inner_module_run(&self, store: &mut Store, instance: Instance) -> Result<()> {
         // If this module exports an _initialize function, run that first.
         if let Ok(initialize) = instance.exports.get_function("_initialize") {
             initialize
-                .call(&mut store, &[])
+                .call(store, &[])
                 .with_context(|| "failed to run _initialize function")?;
         }
 
         // Do we want to invoke a function?
         if let Some(ref invoke) = self.invoke {
-            let result = self.invoke_function(&mut store, &instance, invoke, &self.args)?;
+            let result = self.invoke_function(store, &instance, invoke, &self.args)?;
             println!(
                 "{}",
                 result
@@ -182,7 +212,7 @@ impl RunWithPathBuf {
             );
         } else {
             let start: Function = self.try_find_function(&instance, "_start", &[])?;
-            let result = start.call(&mut store, &[]);
+            let result = start.call(store, &[]);
             #[cfg(feature = "wasi")]
             self.wasi.handle_result(result)?;
             #[cfg(not(feature = "wasi"))]
@@ -196,12 +226,13 @@ impl RunWithPathBuf {
         #[cfg(feature = "webc_runner")]
         {
             if let Ok(pf) = WapmContainer::new(self.path.clone()) {
-                return Self::run_container(
-                    pf,
-                    &self.command_name.clone().unwrap_or_default(),
-                    &self.args,
-                )
-                .map_err(|e| anyhow!("Could not run PiritaFile: {e}"));
+                return self
+                    .run_container(
+                        pf,
+                        &self.command_name.clone().unwrap_or_default(),
+                        &self.args,
+                    )
+                    .map_err(|e| anyhow!("Could not run PiritaFile: {e}"));
             }
         }
         let (mut store, module) = self.get_store_module()?;
@@ -227,7 +258,6 @@ impl RunWithPathBuf {
                 );
                 let import_object =
                     generate_emscripten_env(&mut store, &env, &mut emscripten_globals);
-
                 let mut instance = match Instance::new(&mut store, &module, &import_object) {
                     Ok(instance) => instance,
                     Err(e) => {
@@ -263,6 +293,7 @@ impl RunWithPathBuf {
         let ret = {
             use std::collections::BTreeSet;
             use wasmer_wasi::WasiVersion;
+
             let wasi_versions = Wasi::get_versions(&module);
             match wasi_versions {
                 Some(wasi_versions) if !wasi_versions.is_empty() => {
@@ -292,15 +323,15 @@ impl RunWithPathBuf {
                                 .map(|f| f.to_string_lossy().to_string())
                         })
                         .unwrap_or_default();
-                    let (_ctx, instance) = self
+                    let (ctx, instance) = self
                         .wasi
                         .instantiate(&mut store, &module, program_name, self.args.clone())
                         .with_context(|| "failed to instantiate WASI module")?;
-                                
+
                     // ...
                     let linear_memory = instance.exports.get_memory("memory").unwrap().view(&mut store).data_ptr();
                     let table = instance.exports.get_table("__indirect_function_table").unwrap();
-                    
+
                     unsafe {
                         // 将linear_memory对应的基地址传递给helper
                         get_linear_memory(linear_memory);
@@ -313,27 +344,30 @@ impl RunWithPathBuf {
                         f.call(&mut store, state, ptr, size).unwrap()
                     };
                     unsafe {
-                        register_wasm_js_realloc(get_wasm_js_realloc(&mut realloc_closure), 
+                        register_wasm_js_realloc(get_wasm_js_realloc(&mut realloc_closure),
                             &mut realloc_closure as *mut _ as *mut c_void);
                     }
 
                     let js_def_realloc: TypedFunction<(i32, i32, i32), i32> = instance.exports.get_function("js_def_realloc").
                                             unwrap().typed(&mut store).unwrap();
-                                            
+
                     let mut js_def_realloc_c = |m: i32, ptr: i32, size: i32| -> i32 {
                         js_def_realloc.call(&mut store, m, ptr, size).unwrap()
                     };
                     unsafe {
-                        register_wasm_js_realloc_def(get_wasm_js_realloc_def(&mut js_def_realloc_c), 
+                        register_wasm_js_realloc_def(get_wasm_js_realloc_def(&mut js_def_realloc_c),
                             &mut js_def_realloc_c as *mut _ as *mut c_void)
                     }
                     // ...
-                    self.inner_module_run(store, instance)
+                    let res = self.inner_module_run(&mut store, instance);
+
+                    ctx.cleanup(&mut store, None);
+                    res
                 }
                 // not WASI
                 _ => {
                     let instance = Instance::new(&mut store, &module, &imports! {})?;
-                    self.inner_module_run(store, instance)
+                    self.inner_module_run(&mut store, instance)
                 }
             }
         };
@@ -373,7 +407,12 @@ impl RunWithPathBuf {
     }
 
     #[cfg(feature = "webc_runner")]
-    fn run_container(container: WapmContainer, id: &str, args: &[String]) -> Result<(), String> {
+    fn run_container(
+        &self,
+        container: WapmContainer,
+        id: &str,
+        args: &[String],
+    ) -> Result<(), anyhow::Error> {
         let mut result = None;
 
         #[cfg(feature = "wasi")]
@@ -382,12 +421,15 @@ impl RunWithPathBuf {
                 return r;
             }
 
-            let mut runner = wasmer_wasi::runners::wasi::WasiRunner::default();
+            let (store, _compiler_type) = self.store.get_store()?;
+            let mut runner = wasmer_wasi::runners::wasi::WasiRunner::new(store);
             runner.set_args(args.to_vec());
             result = Some(if id.is_empty() {
-                runner.run(&container).map_err(|e| format!("{e}"))
+                runner.run(&container).map_err(|e| anyhow::anyhow!("{e}"))
             } else {
-                runner.run_cmd(&container, id).map_err(|e| format!("{e}"))
+                runner
+                    .run_cmd(&container, id)
+                    .map_err(|e| anyhow::anyhow!("{e}"))
             });
         }
 
@@ -397,16 +439,19 @@ impl RunWithPathBuf {
                 return r;
             }
 
-            let mut runner = wasmer_wasi::runners::emscripten::EmscriptenRunner::default();
+            let (store, _compiler_type) = self.store.get_store()?;
+            let mut runner = wasmer_wasi::runners::emscripten::EmscriptenRunner::new(store);
             runner.set_args(args.to_vec());
             result = Some(if id.is_empty() {
-                runner.run(&container).map_err(|e| format!("{e}"))
+                runner.run(&container).map_err(|e| anyhow::anyhow!("{e}"))
             } else {
-                runner.run_cmd(&container, id).map_err(|e| format!("{e}"))
+                runner
+                    .run_cmd(&container, id)
+                    .map_err(|e| anyhow::anyhow!("{e}"))
             });
         }
 
-        result.unwrap_or_else(|| Err("neither emscripten or wasi file".to_string()))
+        result.unwrap_or_else(|| Err(anyhow::anyhow!("neither emscripten or wasi file")))
     }
 
     fn get_store_module(&self) -> Result<(Store, Module)> {
@@ -646,17 +691,17 @@ impl Run {
 // == relative == //
 extern "C" {
     fn register_wasm_js_realloc(
-        f: extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32,  
+        f: extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32,
         cl: *mut c_void
     );
     fn register_wasm_js_realloc_def(
-        f: extern "C" fn(i32, i32, i32, *mut c_void) -> i32,  
+        f: extern "C" fn(i32, i32, i32, *mut c_void) -> i32,
         cl: *mut c_void
     );
     fn get_linear_memory(mem: *mut u8);
 }
 
-extern "C" fn wasm_js_realloc<F>(table_index: i32, state: i32, ptr: i32, size: u32, closure: *mut c_void) -> i32 
+extern "C" fn wasm_js_realloc<F>(table_index: i32, state: i32, ptr: i32, size: u32, closure: *mut c_void) -> i32
 where F: FnMut(i32, i32, i32, u32) -> i32 {
     unsafe {
         let cl = &mut *(closure as *mut F);
@@ -669,7 +714,7 @@ where F: FnMut(i32, i32, i32, u32) -> i32 {
     wasm_js_realloc::<F>
 }
 
-extern "C" fn wasm_js_realloc_def<F>(state: i32, ptr: i32, size: i32, closure: *mut c_void) -> i32 
+extern "C" fn wasm_js_realloc_def<F>(state: i32, ptr: i32, size: i32, closure: *mut c_void) -> i32
 where F: FnMut(i32, i32, i32) -> i32 {
     unsafe {
         let cl = &mut *(closure as *mut F);
@@ -680,4 +725,48 @@ where F: FnMut(i32, i32, i32) -> i32 {
 fn get_wasm_js_realloc_def<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, *mut c_void) -> i32
 where F: FnMut(i32, i32, i32) -> i32 {
     wasm_js_realloc_def::<F>
+}
+
+fn generate_coredump(
+    err: &anyhow::Error,
+    source_name: &str,
+    coredump_path: &PathBuf,
+) -> Result<()> {
+    let err = err
+        .downcast_ref::<wasmer::RuntimeError>()
+        .ok_or_else(|| anyhow!("no runtime error found to generate coredump with"))?;
+
+    let mut coredump_builder =
+        wasm_coredump_builder::CoredumpBuilder::new().executable_name(source_name);
+
+    {
+        let mut thread_builder = wasm_coredump_builder::ThreadBuilder::new().thread_name("main");
+
+        for frame in err.trace() {
+            let coredump_frame = wasm_coredump_builder::FrameBuilder::new()
+                .codeoffset(frame.func_offset() as u32)
+                .funcidx(frame.func_index())
+                .build();
+            thread_builder.add_frame(coredump_frame);
+        }
+
+        coredump_builder.add_thread(thread_builder.build());
+    }
+
+    let coredump = coredump_builder
+        .serialize()
+        .map_err(|err| anyhow!("failed to serialize coredump: {}", err))?;
+
+    let mut f = File::create(coredump_path).context(format!(
+        "failed to create file at `{}`",
+        coredump_path.display()
+    ))?;
+    f.write_all(&coredump).with_context(|| {
+        format!(
+            "failed to write coredump file at `{}`",
+            coredump_path.display()
+        )
+    })?;
+
+    Ok(())
 }
