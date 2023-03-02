@@ -1,0 +1,4 @@
+(function() {var implementors = {};
+implementors["wasmer_vfs"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.64.0/std/io/trait.Read.html\" title=\"trait std::io::Read\">Read</a> for <a class=\"struct\" href=\"wasmer_vfs/pipe/struct.Pipe.html\" title=\"struct wasmer_vfs::pipe::Pipe\">Pipe</a>","synthetic":false,"types":["wasmer_vfs::pipe::Pipe"]},{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.64.0/std/io/trait.Read.html\" title=\"trait std::io::Read\">Read</a> for <a class=\"struct\" href=\"wasmer_vfs/pipe/struct.PipeRx.html\" title=\"struct wasmer_vfs::pipe::PipeRx\">PipeRx</a>","synthetic":false,"types":["wasmer_vfs::pipe::PipeRx"]}];
+implementors["wasmer_wasi"] = [];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
