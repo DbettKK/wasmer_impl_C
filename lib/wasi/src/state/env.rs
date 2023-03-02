@@ -5,7 +5,7 @@ use rand::Rng;
 use tracing::{trace, warn};
 use wasmer::{
     AsStoreMut, AsStoreRef, FunctionEnvMut, Global, Instance, Memory, MemoryView, Module,
-    TypedFunction,
+    TypedFunction, Function,
 };
 use wasmer_vfs::{FsError, VirtualFile};
 use wasmer_vnet::DynVirtualNetworking;
@@ -454,6 +454,9 @@ impl WasiEnv {
                 Memory::new_from_existing(&mut store, memory),
             );
         }
+
+        import_object.define("env", "my_lre_exec_backtrack", Function::new_typed(&mut store, wrap_lre_exec_backtrack));
+        import_object.define("env", "my_copy_two_string", Function::new_typed(&mut store, wrap_my_copy_two_string));
 
         // Construct the instance.
         let instance = match Instance::new(&mut store, &module, &import_object) {
@@ -916,5 +919,67 @@ impl WasiEnv {
             let exit_code = exit_code.unwrap_or(Errno::Canceled as ExitCode);
             self.process.terminate(exit_code);
         }
+    }
+}
+
+#[link(name = "my-helpers")]
+extern "C" {
+    fn lre_exec_backtrack(
+        mf: i32,
+        state: i32,
+        s: i32,
+        capture_wasm: i32,
+        stack_wasm: i32,
+        stack_len: i32,
+        pc_wasm: i32,
+        cptr_wasm: i32,
+        no_recurse: i32,
+    ) -> i32;
+    fn my_copy_two_string(
+        dst_str8_wasm: i32,
+        dst_str16_wasm: i32,
+        p1_str8_wasm: i32,
+        p1_str16_wasm: i32,
+        p1_len: i32,
+        p1_wide: i32,
+        p2_str8_wasm: i32,
+        p2_str16_wasm: i32,
+        p2_len: i32,
+        p2_wide: i32,
+    );
+}
+
+fn wrap_lre_exec_backtrack(
+    mf: i32,
+    state: i32,
+    s: i32,
+    capture_wasm: i32,
+    stack_wasm: i32,
+    stack_len: i32,
+    pc_wasm: i32,
+    cptr_wasm: i32,
+    no_recurse: i32,
+) -> i32 {
+    unsafe {
+        //let start = Instant::now();
+        lre_exec_backtrack(mf, state, s, capture_wasm, stack_wasm, stack_len, pc_wasm, cptr_wasm, no_recurse)
+        //println!("{:?}", start.elapsed().as_nanos());
+    }
+}
+
+fn wrap_my_copy_two_string(
+    dst_str8_wasm: i32,
+    dst_str16_wasm: i32,
+    p1_str8_wasm: i32,
+    p1_str16_wasm: i32,
+    p1_len: i32,
+    p1_wide: i32,
+    p2_str8_wasm: i32,
+    p2_str16_wasm: i32,
+    p2_len: i32,
+    p2_wide: i32,
+) {
+    unsafe {
+        my_copy_two_string(dst_str8_wasm, dst_str16_wasm, p1_str8_wasm, p1_str16_wasm, p1_len, p1_wide, p2_str8_wasm, p2_str16_wasm, p2_len, p2_wide)
     }
 }

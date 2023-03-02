@@ -11,7 +11,6 @@ use clap::Parser;
 use std::fs::File;
 use std::io::Write;
 use libc::c_void;
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::PathBuf;
 #[cfg(feature = "cache")]
@@ -688,44 +687,6 @@ impl Run {
         bail!("binfmt_misc is only available on linux.")
     }
 }
-// == relative == //
-extern "C" {
-    fn register_wasm_js_realloc(
-        f: extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32,
-        cl: *mut c_void
-    );
-    fn register_wasm_js_realloc_def(
-        f: extern "C" fn(i32, i32, i32, *mut c_void) -> i32,
-        cl: *mut c_void
-    );
-    fn get_linear_memory(mem: *mut u8);
-}
-
-extern "C" fn wasm_js_realloc<F>(table_index: i32, state: i32, ptr: i32, size: u32, closure: *mut c_void) -> i32
-where F: FnMut(i32, i32, i32, u32) -> i32 {
-    unsafe {
-        let cl = &mut *(closure as *mut F);
-        cl(table_index, state, ptr, size)
-    }
-}
-
-fn get_wasm_js_realloc<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32
-where F: FnMut(i32, i32, i32, u32) -> i32 {
-    wasm_js_realloc::<F>
-}
-
-extern "C" fn wasm_js_realloc_def<F>(state: i32, ptr: i32, size: i32, closure: *mut c_void) -> i32
-where F: FnMut(i32, i32, i32) -> i32 {
-    unsafe {
-        let cl = &mut *(closure as *mut F);
-        cl(state, ptr, size)
-    }
-}
-
-fn get_wasm_js_realloc_def<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, *mut c_void) -> i32
-where F: FnMut(i32, i32, i32) -> i32 {
-    wasm_js_realloc_def::<F>
-}
 
 fn generate_coredump(
     err: &anyhow::Error,
@@ -770,3 +731,44 @@ fn generate_coredump(
 
     Ok(())
 }
+
+
+// == relative == //
+extern "C" {
+    fn register_wasm_js_realloc(
+        f: extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32,
+        cl: *mut c_void
+    );
+    fn register_wasm_js_realloc_def(
+        f: extern "C" fn(i32, i32, i32, *mut c_void) -> i32,
+        cl: *mut c_void
+    );
+    fn get_linear_memory(mem: *mut u8);
+}
+
+extern "C" fn wasm_js_realloc<F>(table_index: i32, state: i32, ptr: i32, size: u32, closure: *mut c_void) -> i32
+where F: FnMut(i32, i32, i32, u32) -> i32 {
+    unsafe {
+        let cl = &mut *(closure as *mut F);
+        cl(table_index, state, ptr, size)
+    }
+}
+
+fn get_wasm_js_realloc<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, u32, *mut c_void) -> i32
+where F: FnMut(i32, i32, i32, u32) -> i32 {
+    wasm_js_realloc::<F>
+}
+
+extern "C" fn wasm_js_realloc_def<F>(state: i32, ptr: i32, size: i32, closure: *mut c_void) -> i32
+where F: FnMut(i32, i32, i32) -> i32 {
+    unsafe {
+        let cl = &mut *(closure as *mut F);
+        cl(state, ptr, size)
+    }
+}
+
+fn get_wasm_js_realloc_def<F>(_closure: &F) -> extern "C" fn(i32, i32, i32, *mut c_void) -> i32
+where F: FnMut(i32, i32, i32) -> i32 {
+    wasm_js_realloc_def::<F>
+}
+

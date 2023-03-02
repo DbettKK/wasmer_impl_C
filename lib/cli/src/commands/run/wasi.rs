@@ -1,13 +1,11 @@
 use crate::utils::{parse_envvar, parse_mapdir};
 use anyhow::Result;
-use libc::c_void;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use wasmer::{AsStoreMut, FunctionEnv, Instance, Module, RuntimeError, Value, TypedFunction, Function};
-use std::sync::Arc;
-use std::{collections::BTreeSet, path::Path};
 use wasmer::{AsStoreMut, Instance, Module, RuntimeError, Value};
+use std::sync::Arc;
+use std::path::Path;
 use wasmer_vfs::FileSystem;
 use wasmer_vfs::{DeviceFile, PassthruFileSystem, RootFileSystemBuilder};
 use wasmer_wasi::types::__WASI_STDIN_FILENO;
@@ -183,21 +181,9 @@ impl Wasi {
                     .setup_fs(Box::new(wasmer_wasi_experimental_io_devices::initialize));
             }
         }
-        let wasi_env = wasi_state_builder.finalize(store)?;
-        wasi_env.env.as_mut(store).state.fs.is_wasix.store(
-            is_wasix_module(module),
-            std::sync::atomic::Ordering::Release,
-        );
-        let mut import_object = import_object_for_all_wasi_versions(store, &wasi_env.env);
-        wasi_import_shared_memory(&mut import_object, module, store);
 
-        import_object.define("env", "my_lre_exec_backtrack", Function::new_typed(store, wrap_lre_exec_backtrack));
-        import_object.define("env", "my_copy_two_string", Function::new_typed(store, wrap_my_copy_two_string));
-
-        let instance = Instance::new(store, module, &import_object)?;
-        let memory = instance.exports.get_memory("memory")?;
-        wasi_env.data_mut(store).set_memory(memory.clone());
-        Ok((wasi_env.env, instance))
+        let (instance, wasi_env) = builder.instantiate(module.clone(), store)?;
+        Ok((wasi_env, instance))
     }
 
     /// Helper function for handling the result of a Wasi _start function.
@@ -232,64 +218,3 @@ impl Wasi {
     }
 }
 
-#[link(name = "my-helpers")]
-extern "C" {
-    fn lre_exec_backtrack(
-        mf: i32,
-        state: i32,
-        s: i32,
-        capture_wasm: i32,
-        stack_wasm: i32,
-        stack_len: i32,
-        pc_wasm: i32,
-        cptr_wasm: i32,
-        no_recurse: i32,
-    ) -> i32;
-    fn my_copy_two_string(
-        dst_str8_wasm: i32,
-        dst_str16_wasm: i32,
-        p1_str8_wasm: i32,
-        p1_str16_wasm: i32,
-        p1_len: i32,
-        p1_wide: i32,
-        p2_str8_wasm: i32,
-        p2_str16_wasm: i32,
-        p2_len: i32,
-        p2_wide: i32,
-    );
-}
-
-fn wrap_lre_exec_backtrack(
-    mf: i32,
-    state: i32,
-    s: i32,
-    capture_wasm: i32,
-    stack_wasm: i32,
-    stack_len: i32,
-    pc_wasm: i32,
-    cptr_wasm: i32,
-    no_recurse: i32,
-) -> i32 {
-    unsafe {
-        //let start = Instant::now();
-        lre_exec_backtrack(mf, state, s, capture_wasm, stack_wasm, stack_len, pc_wasm, cptr_wasm, no_recurse)
-        //println!("{:?}", start.elapsed().as_nanos());
-    }
-}
-
-fn wrap_my_copy_two_string(
-    dst_str8_wasm: i32,
-    dst_str16_wasm: i32,
-    p1_str8_wasm: i32,
-    p1_str16_wasm: i32,
-    p1_len: i32,
-    p1_wide: i32,
-    p2_str8_wasm: i32,
-    p2_str16_wasm: i32,
-    p2_len: i32,
-    p2_wide: i32,
-) {
-    unsafe {
-        my_copy_two_string(dst_str8_wasm, dst_str16_wasm, p1_str8_wasm, p1_str16_wasm, p1_len, p1_wide, p2_str8_wasm, p2_str16_wasm, p2_len, p2_wide)
-    }
-}
